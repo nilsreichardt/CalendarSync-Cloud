@@ -30,3 +30,7 @@ dist/
 .DS_Store
 
 vendor/
+
+# Cloud
+web/.next/
+web/node_modules/

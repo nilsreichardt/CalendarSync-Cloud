@@ -230,6 +230,97 @@ from your calendar?
 Use the `--clean` flag to get rid of all the unwanted events. (We leave your
 events which weren't synced with CalendarSync alone! :) )
 
+# Web Platform (Cloud)
+
+The repository now contains a production-oriented web platform scaffold:
+
+- `web/` - Next.js frontend with `next-auth` Google sign-in, account-linking UI, rules UI, and run history UI
+- `cmd/calendarsync-api` - Go HTTP API for account links, rules, run triggering, and scheduler dispatch
+- `cmd/calendarsync-worker` - Go worker process for queued run execution
+- `db/migrations/0001_web_platform.sql` - Neon/Postgres schema for users, linked accounts, rules, runs, and encrypted tokens
+
+## Environment Variables
+
+### API (`cmd/calendarsync-api`)
+
+- `DATABASE_URL` - Neon/Postgres DSN
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GOOGLE_OAUTH_REDIRECT_URL` - Should point to your web callback route, e.g. `https://your-web-host/oauth/google/callback`
+- `OAUTH_STATE_SECRET_B64` - base64 encoded random key for state signing
+- `KMS_CRYPTO_KEY` - optional Cloud KMS crypto key resource name (recommended for envelope encryption)
+- `CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64` - required fallback if `KMS_CRYPTO_KEY` is not set (32-byte base64 key)
+
+### Worker (`cmd/calendarsync-worker`)
+
+- `DATABASE_URL`
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `KMS_CRYPTO_KEY` (optional)
+- `CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64` (fallback when KMS is not configured)
+
+### Frontend (`web/`)
+
+- `AUTH_SECRET`
+- `AUTH_GOOGLE_ID`
+- `AUTH_GOOGLE_SECRET`
+- `CALENDARSYNC_API_URL` - base URL for `calendarsync-api` (for example `https://api.example.com`)
+
+## Run Locally
+
+1. Apply migration `db/migrations/0001_web_platform.sql` to your Postgres/Neon database.
+2. Start API:
+   - `go run ./cmd/calendarsync-api`
+3. Start worker:
+   - `go run ./cmd/calendarsync-worker`
+4. Start frontend:
+   - `cd web && npm install && npm run dev`
+
+## Deploy to GCP (Cloud Run + Scheduler)
+
+Use the deployment script:
+
+```bash
+GOOGLE_OAUTH_CLIENT_ID="<google-oauth-client-id>" \
+GOOGLE_OAUTH_CLIENT_SECRET="<google-oauth-client-secret>" \
+./deploy/e2e_deploy.sh
+```
+
+If you want a custom domain on the web service, pass `WEB_DOMAIN` and use Cloud
+Run domain mapping directly. Firebase Hosting is not required for this setup.
+
+```bash
+GOOGLE_OAUTH_CLIENT_ID="<google-oauth-client-id>" \
+GOOGLE_OAUTH_CLIENT_SECRET="<google-oauth-client-secret>" \
+WEB_DOMAIN="calendar-sync.nils.re" \
+./deploy/e2e_deploy.sh
+```
+
+The script uses project `open-calendar-sync` and will:
+
+- enable required APIs
+- create Artifact Registry + secrets
+- build and push API/worker/web images
+- deploy:
+  - Cloud Run service `calendarsync-api`
+  - Cloud Run service `calendarsync-web`
+  - Cloud Run job `calendarsync-worker`
+- create Cloud Scheduler jobs for dispatch and worker execution
+
+Important:
+
+- `NEON_DB` must exist in `.env` or env vars.
+- You must configure a valid Google OAuth client and register the final redirect URL printed by the script (format: `<web-url>/oauth/google/callback`).
+- When `WEB_DOMAIN` is set, also add `https://<web-domain>/api/auth/callback/google`
+  as an authorized redirect URI and `https://<web-domain>` as an authorized JavaScript
+  origin in the same Google OAuth client.
+
+## Notes
+
+- Sync execution reuses the existing Go sync controller and transformer/filter factory.
+- Token material is encrypted before persistence in `encrypted_oauth_tokens`.
+- Bidirectional loop prevention still relies on existing metadata/source markers in CalendarSync.
+
 # Trademarks
 
 GOOGLE is a trademark of GOOGLE INC. OUTLOOK is a trademark of Microsoft
