@@ -1,8 +1,6 @@
-# CalendarSync Cloud
-
 <div align="center">
   <p>
-    <img src="./docs/static/logo.png" width="200" height="200" alt="CalendarSync logo"/>
+    <img width="1480" height="1507" alt="image" src="https://github.com/user-attachments/assets/a704a237-7555-4ec8-8f72-c9cc915b1bee" />
   </p>
   <h1>CalendarSync Cloud</h1>
   <p><b>Sync multiple Google calendars into one view with hosted rules, scheduled runs, and cleanup.</b></p>
