@@ -100,7 +100,9 @@ func fetchGoogleUserInfo(ctx context.Context, client *http.Client) (*googleUserI
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		by, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("userinfo request failed: %s", string(by))

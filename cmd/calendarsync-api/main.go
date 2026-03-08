@@ -29,7 +29,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() {
+		if err := srv.Close(); err != nil {
+			log.Printf("server close error: %v", err)
+		}
+	}()
 
 	addr := os.Getenv("PORT")
 	if addr == "" {

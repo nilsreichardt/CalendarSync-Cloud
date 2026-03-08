@@ -76,7 +76,9 @@ func (p *PostgresStore) ListGoogleConnections(ctx context.Context, userID uuid.U
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	connections := []GoogleConnection{}
 	for rows.Next() {
@@ -112,7 +114,9 @@ func (p *PostgresStore) ReplaceConnectionCalendars(ctx context.Context, connecti
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM connection_calendars WHERE connection_id = $1`, connectionID); err != nil {
 		return err
@@ -141,7 +145,9 @@ func (p *PostgresStore) ListCalendarsByUser(ctx context.Context, userID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	calendars := []ConnectionCalendar{}
 	for rows.Next() {
@@ -164,7 +170,9 @@ func (p *PostgresStore) ListCalendarsByConnection(ctx context.Context, connectio
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	calendars := []ConnectionCalendar{}
 	for rows.Next() {
@@ -210,7 +218,9 @@ func (p *PostgresStore) CreateRule(ctx context.Context, rule SyncRule) (*SyncRul
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	row := tx.QueryRowContext(ctx, `
 		INSERT INTO sync_rules (
@@ -245,7 +255,9 @@ func (p *PostgresStore) UpdateRule(ctx context.Context, rule SyncRule) (*SyncRul
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	res, err := tx.ExecContext(ctx, `
 		UPDATE sync_rules SET
@@ -330,7 +342,9 @@ func (p *PostgresStore) ListRules(ctx context.Context, userID uuid.UUID) ([]Sync
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	rules := []SyncRule{}
 	for rows.Next() {
 		var ruleID uuid.UUID
@@ -387,7 +401,9 @@ func (p *PostgresStore) loadFilters(ctx context.Context, ruleID uuid.UUID) ([]co
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var result []config.Filter
 	for rows.Next() {
@@ -417,7 +433,9 @@ func (p *PostgresStore) loadTransformations(ctx context.Context, ruleID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var result []config.Transformer
 	for rows.Next() {
@@ -460,7 +478,9 @@ func (p *PostgresStore) CreateCleanupRun(ctx context.Context, userID, ruleID uui
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	res, err := tx.ExecContext(ctx, `
 		UPDATE sync_rules
@@ -540,7 +560,9 @@ func (p *PostgresStore) ListRuns(ctx context.Context, userID uuid.UUID) ([]SyncR
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	runs := []SyncRun{}
 	for rows.Next() {
 		var run SyncRun
@@ -571,7 +593,9 @@ func (p *PostgresStore) ClaimNextPendingRun(ctx context.Context) (*SyncRun, erro
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	row := tx.QueryRowContext(ctx, `
 		WITH next_run AS (

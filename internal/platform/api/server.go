@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -118,17 +117,6 @@ func parseUUIDFromPath(path string) (uuid.UUID, error) {
 		return uuid.Nil, errors.New("invalid path")
 	}
 	return uuid.Parse(parts[len(parts)-1])
-}
-
-func parseInt(v string, fallback int) int {
-	if v == "" {
-		return fallback
-	}
-	i, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return i
 }
 
 func nowRFC3339() string {

@@ -9,9 +9,10 @@ import (
 	"fmt"
 	"io"
 
+	"cloud.google.com/go/auth/credentials"
 	kms "cloud.google.com/go/kms/apiv1"
+	"cloud.google.com/go/kms/apiv1/kmspb"
 	"google.golang.org/api/option"
-	kmspb "google.golang.org/genproto/googleapis/cloud/kms/v1"
 )
 
 const dekSize = 32
@@ -39,7 +40,14 @@ func NewKMSEnvelope(ctx context.Context, cryptoKeyID string, credentialsFile str
 		err    error
 	)
 	if credentialsFile != "" {
-		client, err = kms.NewKeyManagementClient(ctx, option.WithCredentialsFile(credentialsFile))
+		creds, detectErr := credentials.DetectDefault(&credentials.DetectOptions{
+			CredentialsFile: credentialsFile,
+			Scopes:          []string{"https://www.googleapis.com/auth/cloud-platform"},
+		})
+		if detectErr != nil {
+			return nil, detectErr
+		}
+		client, err = kms.NewKeyManagementClient(ctx, option.WithAuthCredentials(creds))
 	} else {
 		client, err = kms.NewKeyManagementClient(ctx)
 	}

@@ -59,7 +59,11 @@ func (r *Runner) executeRun(ctx context.Context, run *store.SyncRun) error {
 	if !locked {
 		return fmt.Errorf("rule is already running")
 	}
-	defer r.store.ReleaseRuleLock(ctx, rule.ID)
+	defer func() {
+		if releaseErr := r.store.ReleaseRuleLock(ctx, rule.ID); releaseErr != nil {
+			log.Error("failed to release rule lock", "rule_id", rule.ID, "err", releaseErr)
+		}
+	}()
 
 	sourceTokenRaw, err := r.store.GetEncryptedToken(ctx, rule.SourceConnectionID)
 	if err != nil {

@@ -67,7 +67,9 @@ func (s *Server) handleSchedulerDispatch(w http.ResponseWriter, r *http.Request)
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	enqueued := 0
 	minInterval := dispatchInterval()

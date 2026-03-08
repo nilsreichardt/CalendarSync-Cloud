@@ -17,7 +17,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer st.Close()
+	defer func() {
+		if err := st.Close(); err != nil {
+			log.Printf("store close error: %v", err)
+		}
+	}()
 
 	tokenCodec, err := newTokenCodec(ctx)
 	if err != nil {
