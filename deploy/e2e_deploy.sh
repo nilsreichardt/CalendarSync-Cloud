@@ -238,7 +238,7 @@ gcloud --project "${PROJECT_ID}" scheduler jobs describe calendarsync-dispatch >
   gcloud --project "${PROJECT_ID}" scheduler jobs delete calendarsync-dispatch --quiet
 gcloud --project "${PROJECT_ID}" scheduler jobs create http calendarsync-dispatch \
   --location "${REGION}" \
-  --schedule "* * * * *" \
+  --schedule "*/10 * * * *" \
   --uri "${API_URL}/internal/scheduler/dispatch" \
   --http-method POST \
   --oidc-service-account-email "${SCHEDULER_SA}" \
@@ -255,7 +255,7 @@ gcloud --project "${PROJECT_ID}" scheduler jobs describe calendarsync-run-worker
   gcloud --project "${PROJECT_ID}" scheduler jobs delete calendarsync-run-worker --quiet
 gcloud --project "${PROJECT_ID}" scheduler jobs create http calendarsync-run-worker \
   --location "${REGION}" \
-  --schedule "* * * * *" \
+  --schedule "*/10 * * * *" \
   --uri "${RUN_URI}" \
   --http-method POST \
   --oauth-service-account-email "${SCHEDULER_SA}" \
