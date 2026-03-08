@@ -7,6 +7,10 @@ REPO="${REPO:-calendarsync}"
 API_SERVICE="${API_SERVICE:-calendarsync-api}"
 WEB_SERVICE="${WEB_SERVICE:-calendarsync-web}"
 WORKER_JOB="${WORKER_JOB:-calendarsync-worker}"
+API_SA="${API_SA:-calendarsync-api@${PROJECT_ID}.iam.gserviceaccount.com}"
+WEB_SA="${WEB_SA:-calendarsync-web@${PROJECT_ID}.iam.gserviceaccount.com}"
+WORKER_SA="${WORKER_SA:-calendarsync-worker@${PROJECT_ID}.iam.gserviceaccount.com}"
+SCHEDULER_SA="${SCHEDULER_SA:-calendarsync-scheduler@${PROJECT_ID}.iam.gserviceaccount.com}"
 
 usage() {
   cat <<'EOF'
@@ -73,24 +77,45 @@ build_image() {
 deploy_service() {
   local name="$1"
   local image="$2"
+  shift 2
 
   gcloud --project "${PROJECT_ID}" run deploy "${name}" \
     --region "${REGION}" \
     --image "${image}" \
+    "$@" \
     --quiet
 }
 
 deploy_job() {
   local name="$1"
   local image="$2"
+  shift 2
 
   gcloud --project "${PROJECT_ID}" run jobs deploy "${name}" \
     --region "${REGION}" \
     --image "${image}" \
+    "$@" \
     --quiet
 }
 
 require_cmd gcloud
+
+grant_run_invoker() {
+  local service_name="$1"
+  local member="$2"
+  gcloud --project "${PROJECT_ID}" run services add-iam-policy-binding "${service_name}" \
+    --region "${REGION}" \
+    --member "${member}" \
+    --role "roles/run.invoker" >/dev/null
+}
+
+remove_public_invoker() {
+  local service_name="$1"
+  gcloud --project "${PROJECT_ID}" run services remove-iam-policy-binding "${service_name}" \
+    --region "${REGION}" \
+    --member "allUsers" \
+    --role "roles/run.invoker" >/dev/null 2>&1 || true
+}
 
 gcloud --project "${PROJECT_ID}" artifacts repositories describe "${REPO}" \
   --location "${REGION}" >/dev/null 2>&1 || \
@@ -115,7 +140,10 @@ for component in "${COMPONENTS[@]}"; do
       echo "Building ${component} image: ${IMAGE}"
       build_image "deploy/cloudbuild.api.yaml" "${IMAGE}"
       echo "Deploying service ${API_SERVICE}"
-      deploy_service "${API_SERVICE}" "${IMAGE}"
+      deploy_service "${API_SERVICE}" "${IMAGE}" --no-allow-unauthenticated --service-account "${API_SA}"
+      grant_run_invoker "${API_SERVICE}" "serviceAccount:${WEB_SA}"
+      grant_run_invoker "${API_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
+      remove_public_invoker "${API_SERVICE}"
       ;;
     web)
       require_existing_service service "${WEB_SERVICE}"
@@ -123,7 +151,7 @@ for component in "${COMPONENTS[@]}"; do
       echo "Building ${component} image: ${IMAGE}"
       build_image "deploy/cloudbuild.web.yaml" "${IMAGE}"
       echo "Deploying service ${WEB_SERVICE}"
-      deploy_service "${WEB_SERVICE}" "${IMAGE}"
+      deploy_service "${WEB_SERVICE}" "${IMAGE}" --allow-unauthenticated --service-account "${WEB_SA}"
       ;;
     worker)
       require_existing_service job "${WORKER_JOB}"
@@ -131,7 +159,7 @@ for component in "${COMPONENTS[@]}"; do
       echo "Building ${component} image: ${IMAGE}"
       build_image "deploy/cloudbuild.worker.yaml" "${IMAGE}"
       echo "Deploying job ${WORKER_JOB}"
-      deploy_job "${WORKER_JOB}" "${IMAGE}"
+      deploy_job "${WORKER_JOB}" "${IMAGE}" --service-account "${WORKER_SA}"
       ;;
     *)
       echo "Unknown component: ${component}" >&2

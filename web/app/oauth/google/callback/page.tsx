@@ -1,4 +1,5 @@
 import { auth } from "@/auth";
+import { apiFetch } from "@/lib/api";
 import { redirect } from "next/navigation";
 
 type Props = {
@@ -18,16 +19,9 @@ export default async function GoogleCallbackPage({ searchParams }: Props) {
     redirect("/");
   }
 
-  const url = new URL(`${process.env.CALENDARSYNC_API_URL}/api/connections/google/callback`);
+  const url = new URL("/api/connections/google/callback", process.env.CALENDARSYNC_API_URL);
   url.searchParams.set("code", code);
   url.searchParams.set("state", state);
-  await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      "X-User-ID": session.user.id,
-      "X-User-Email": session.user.email
-    },
-    cache: "no-store"
-  });
+  await apiFetch(`${url.pathname}?${url.searchParams.toString()}`, { method: "GET" });
   redirect("/");
 }
