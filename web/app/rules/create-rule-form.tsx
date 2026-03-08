@@ -56,7 +56,7 @@ const identifiers = ["Now", "TodayStart", "TodayEnd", "MonthStart", "MonthEnd", 
 
 const baseFieldHelp = {
   name: "A private label for this sync rule. Use something that explains the source, target, and purpose.",
-  schedule: "How often the sync job runs. The default runs every hour.",
+  schedule: "How often the sync job runs. The default runs every minute.",
   sourceConnectionId: "The connected account CalendarSync reads events from.",
   sourceCalendarId: "The calendar inside the source account that provides the original events.",
   targetConnectionId: "The connected account CalendarSync writes synced events into.",
@@ -362,7 +362,7 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
                 Schedule
                 <InfoTip text={baseFieldHelp.schedule} />
               </span>
-              <input name="schedule" defaultValue="FREQ=HOURLY;INTERVAL=1" />
+              <input name="schedule" defaultValue="FREQ=MINUTELY;INTERVAL=1" />
             </label>
 
             <label className="field">
