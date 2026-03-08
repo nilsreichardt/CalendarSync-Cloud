@@ -15,6 +15,12 @@ Usage: deploy/deploy.sh [api] [web] [worker]
 Deploy one or more CalendarSync components by building a new image in Cloud Build
 and updating the existing Cloud Run service/job to that image.
 
+Optional environment variables:
+  PROJECT_ID   GCP project id (default: open-calendar-sync)
+  REGION       Artifact Registry / Cloud Run region (default: europe-west1)
+  REPO         Artifact Registry repository name (default: calendarsync)
+  TAG          Image tag override (default: current git sha, or timestamp for dirty trees)
+
 Examples:
   deploy/deploy.sh api web
   PROJECT_ID=open-calendar-sync REGION=europe-west1 deploy/deploy.sh worker
@@ -93,9 +99,12 @@ gcloud --project "${PROJECT_ID}" artifacts repositories describe "${REPO}" \
     --location "${REGION}" \
     --description "CalendarSync images"
 
-TAG="$(git rev-parse --short HEAD 2>/dev/null || true)"
-if [[ -z "${TAG}" || -n "$(git status --porcelain 2>/dev/null)" ]]; then
-  TAG="$(date +%Y%m%d-%H%M%S)"
+TAG="${TAG:-}"
+if [[ -z "${TAG}" ]]; then
+  TAG="$(git rev-parse --short HEAD 2>/dev/null || true)"
+  if [[ -z "${TAG}" || -n "$(git status --porcelain 2>/dev/null)" ]]; then
+    TAG="$(date +%Y%m%d-%H%M%S)"
+  fi
 fi
 
 for component in "${COMPONENTS[@]}"; do
