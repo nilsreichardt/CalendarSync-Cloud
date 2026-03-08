@@ -69,9 +69,25 @@ func (r *Runner) executeRun(ctx context.Context, run *store.SyncRun) error {
 	if err != nil {
 		return err
 	}
+	if rewritten, err := r.tokenCodec.ReencryptIfLegacy(ctx, sourceTokenRaw); err != nil {
+		return err
+	} else if rewritten != nil {
+		if err := r.store.StoreEncryptedToken(ctx, *rewritten); err != nil {
+			return err
+		}
+		sourceTokenRaw = rewritten
+	}
 	targetTokenRaw, err := r.store.GetEncryptedToken(ctx, rule.TargetConnectionID)
 	if err != nil {
 		return err
+	}
+	if rewritten, err := r.tokenCodec.ReencryptIfLegacy(ctx, targetTokenRaw); err != nil {
+		return err
+	} else if rewritten != nil {
+		if err := r.store.StoreEncryptedToken(ctx, *rewritten); err != nil {
+			return err
+		}
+		targetTokenRaw = rewritten
 	}
 	sourceToken, err := r.tokenCodec.DecryptToken(ctx, sourceTokenRaw)
 	if err != nil {

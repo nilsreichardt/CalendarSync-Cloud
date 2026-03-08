@@ -25,6 +25,7 @@ jobs:
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       REGION: ${{ vars.GCP_REGION }}
+      BUILD_BACKEND: docker
     steps:
       - name: Checkout
         uses: actions/checkout@v6

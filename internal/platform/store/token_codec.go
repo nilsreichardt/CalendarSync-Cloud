@@ -10,11 +10,19 @@ import (
 )
 
 type TokenCodec struct {
-	envelope crypto.Envelope
+	primary      crypto.Envelope
+	legacyStatic crypto.Envelope
 }
 
 func NewTokenCodec(envelope crypto.Envelope) *TokenCodec {
-	return &TokenCodec{envelope: envelope}
+	return &TokenCodec{primary: envelope}
+}
+
+func NewTokenCodecWithLegacy(primary crypto.Envelope, legacyStatic crypto.Envelope) *TokenCodec {
+	return &TokenCodec{
+		primary:      primary,
+		legacyStatic: legacyStatic,
+	}
 }
 
 func (c *TokenCodec) EncryptToken(ctx context.Context, connectionID uuid.UUID, provider string, token *oauth2.Token) (*EncryptedToken, error) {
@@ -22,7 +30,7 @@ func (c *TokenCodec) EncryptToken(ctx context.Context, connectionID uuid.UUID, p
 	if err != nil {
 		return nil, err
 	}
-	encrypted, err := c.envelope.Encrypt(ctx, by)
+	encrypted, err := c.primary.Encrypt(ctx, by)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +45,11 @@ func (c *TokenCodec) EncryptToken(ctx context.Context, connectionID uuid.UUID, p
 }
 
 func (c *TokenCodec) DecryptToken(ctx context.Context, encrypted *EncryptedToken) (*oauth2.Token, error) {
-	plaintext, err := c.envelope.Decrypt(ctx, &crypto.EnvelopeCiphertext{
+	envelope := c.primary
+	if encrypted.KeyVersion == "static" && c.legacyStatic != nil {
+		envelope = c.legacyStatic
+	}
+	plaintext, err := envelope.Decrypt(ctx, &crypto.EnvelopeCiphertext{
 		CipherText: encrypted.CipherText,
 		DEKCipher:  encrypted.DEKCipher,
 		Nonce:      encrypted.Nonce,
@@ -51,4 +63,15 @@ func (c *TokenCodec) DecryptToken(ctx context.Context, encrypted *EncryptedToken
 		return nil, err
 	}
 	return &token, nil
+}
+
+func (c *TokenCodec) ReencryptIfLegacy(ctx context.Context, encrypted *EncryptedToken) (*EncryptedToken, error) {
+	if encrypted.KeyVersion != "static" || c.legacyStatic == nil {
+		return nil, nil
+	}
+	token, err := c.DecryptToken(ctx, encrypted)
+	if err != nil {
+		return nil, err
+	}
+	return c.EncryptToken(ctx, encrypted.ConnectionID, encrypted.Provider, token)
 }

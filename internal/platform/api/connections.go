@@ -212,6 +212,14 @@ func (s *Server) RefreshCalendarsForConnection(ctx context.Context, connectionID
 	if err != nil {
 		return err
 	}
+	if rewritten, err := s.tokenCodec.ReencryptIfLegacy(ctx, encrypted); err != nil {
+		return err
+	} else if rewritten != nil {
+		if err := s.store.StoreEncryptedToken(ctx, *rewritten); err != nil {
+			return err
+		}
+		encrypted = rewritten
+	}
 	token, err := s.tokenCodec.DecryptToken(ctx, encrypted)
 	if err != nil {
 		return err

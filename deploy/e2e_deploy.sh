@@ -11,6 +11,8 @@ API_SA_ID="calendarsync-api"
 WEB_SA_ID="calendarsync-web"
 WORKER_SA_ID="calendarsync-worker"
 SCHEDULER_SA_ID="calendarsync-scheduler"
+KMS_KEY_RING="${KMS_KEY_RING:-calendarsync}"
+KMS_KEY_NAME="${KMS_KEY_NAME:-oauth-token-key}"
 WEB_DOMAIN="${WEB_DOMAIN:-}"
 
 if [[ -f .env && -z "${NEON_DB:-}" ]]; then
@@ -96,6 +98,26 @@ ensure_service_account "${WEB_SA_ID}" "CalendarSync Web"
 ensure_service_account "${WORKER_SA_ID}" "CalendarSync Worker"
 ensure_service_account "${SCHEDULER_SA_ID}" "CalendarSync Scheduler"
 
+gcloud --project "${PROJECT_ID}" kms keyrings describe "${KMS_KEY_RING}" --location "${REGION}" >/dev/null 2>&1 || \
+  gcloud --project "${PROJECT_ID}" kms keyrings create "${KMS_KEY_RING}" --location "${REGION}"
+gcloud --project "${PROJECT_ID}" kms keys describe "${KMS_KEY_NAME}" --location "${REGION}" --keyring "${KMS_KEY_RING}" >/dev/null 2>&1 || \
+  gcloud --project "${PROJECT_ID}" kms keys create "${KMS_KEY_NAME}" \
+    --location "${REGION}" \
+    --keyring "${KMS_KEY_RING}" \
+    --purpose encryption
+KMS_CRYPTO_KEY="projects/${PROJECT_ID}/locations/${REGION}/keyRings/${KMS_KEY_RING}/cryptoKeys/${KMS_KEY_NAME}"
+
+gcloud --project "${PROJECT_ID}" kms keys add-iam-policy-binding "${KMS_KEY_NAME}" \
+  --location "${REGION}" \
+  --keyring "${KMS_KEY_RING}" \
+  --member "serviceAccount:${API_SA}" \
+  --role "roles/cloudkms.cryptoKeyEncrypterDecrypter" >/dev/null
+gcloud --project "${PROJECT_ID}" kms keys add-iam-policy-binding "${KMS_KEY_NAME}" \
+  --location "${REGION}" \
+  --keyring "${KMS_KEY_RING}" \
+  --member "serviceAccount:${WORKER_SA}" \
+  --role "roles/cloudkms.cryptoKeyEncrypterDecrypter" >/dev/null
+
 gcloud --project "${PROJECT_ID}" artifacts repositories describe "${REPO}" --location "${REGION}" >/dev/null 2>&1 || \
   gcloud --project "${PROJECT_ID}" artifacts repositories create "${REPO}" --repository-format docker --location "${REGION}" --description "CalendarSync images"
 
@@ -176,7 +198,7 @@ gcloud --project "${PROJECT_ID}" run deploy "${API_SERVICE}" \
   --no-allow-unauthenticated \
   --service-account "${API_SA}" \
   --set-secrets "DATABASE_URL=calendarsync-neon-db:latest,GOOGLE_OAUTH_CLIENT_ID=calendarsync-google-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=calendarsync-google-client-secret:latest,SCHEDULER_SHARED_SECRET=calendarsync-scheduler-secret:latest,OAUTH_STATE_SECRET_B64=calendarsync-oauth-state-secret-b64:latest,CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64=calendarsync-static-encryption-key-b64:latest" \
-  --set-env-vars "GOOGLE_OAUTH_REDIRECT_URL=${API_REDIRECT_URL},DISPATCH_MIN_INTERVAL_SECONDS=30"
+  --set-env-vars "GOOGLE_OAUTH_REDIRECT_URL=${API_REDIRECT_URL},DISPATCH_MIN_INTERVAL_SECONDS=30,KMS_CRYPTO_KEY=${KMS_CRYPTO_KEY}"
 
 grant_run_invoker "${API_SERVICE}" "serviceAccount:${WEB_SA}"
 grant_run_invoker "${API_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
@@ -208,7 +230,8 @@ gcloud --project "${PROJECT_ID}" run jobs deploy "${WORKER_JOB}" \
   --region "${REGION}" \
   --image "${WORKER_IMAGE}" \
   --service-account "${WORKER_SA}" \
-  --set-secrets "DATABASE_URL=calendarsync-neon-db:latest,GOOGLE_OAUTH_CLIENT_ID=calendarsync-google-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=calendarsync-google-client-secret:latest,CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64=calendarsync-static-encryption-key-b64:latest"
+  --set-secrets "DATABASE_URL=calendarsync-neon-db:latest,GOOGLE_OAUTH_CLIENT_ID=calendarsync-google-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=calendarsync-google-client-secret:latest,CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64=calendarsync-static-encryption-key-b64:latest" \
+  --set-env-vars "KMS_CRYPTO_KEY=${KMS_CRYPTO_KEY}"
 
 # Scheduler -> dispatch endpoint
 gcloud --project "${PROJECT_ID}" scheduler jobs describe calendarsync-dispatch >/dev/null 2>&1 && \

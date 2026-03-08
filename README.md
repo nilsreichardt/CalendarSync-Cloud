@@ -85,6 +85,7 @@ Useful deployment entrypoints:
 
 - `deploy/e2e_deploy.sh` bootstraps a first deployment, creates secrets, and creates scheduler jobs
 - `deploy/deploy.sh` rebuilds and redeploys existing services/jobs
+  - Set `BUILD_BACKEND=docker` to build locally and push to Artifact Registry instead of using Cloud Build. This avoids Cloud Build staging bucket permissions, which is useful for GitHub WIF deploys.
 
 The repository's `.env.example` currently includes:
 

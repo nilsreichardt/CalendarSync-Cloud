@@ -49,7 +49,15 @@ func newTokenCodec(ctx context.Context) (*store.TokenCodec, error) {
 		if err != nil {
 			return nil, err
 		}
-		return store.NewTokenCodec(envelope), nil
+		staticKey := os.Getenv("CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64")
+		if staticKey == "" {
+			return store.NewTokenCodec(envelope), nil
+		}
+		legacy, err := platformcrypto.NewStaticEnvelope(staticKey)
+		if err != nil {
+			return nil, err
+		}
+		return store.NewTokenCodecWithLegacy(envelope, legacy), nil
 	}
 	staticKey := mustEnv("CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64")
 	envelope, err := platformcrypto.NewStaticEnvelope(staticKey)

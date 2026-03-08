@@ -4,6 +4,7 @@ set -euo pipefail
 PROJECT_ID="${PROJECT_ID:-open-calendar-sync}"
 REGION="${REGION:-europe-west1}"
 REPO="${REPO:-calendarsync}"
+BUILD_BACKEND="${BUILD_BACKEND:-cloudbuild}"
 API_SERVICE="${API_SERVICE:-calendarsync-api}"
 WEB_SERVICE="${WEB_SERVICE:-calendarsync-web}"
 WORKER_JOB="${WORKER_JOB:-calendarsync-worker}"
@@ -11,18 +12,21 @@ API_SA="${API_SA:-calendarsync-api@${PROJECT_ID}.iam.gserviceaccount.com}"
 WEB_SA="${WEB_SA:-calendarsync-web@${PROJECT_ID}.iam.gserviceaccount.com}"
 WORKER_SA="${WORKER_SA:-calendarsync-worker@${PROJECT_ID}.iam.gserviceaccount.com}"
 SCHEDULER_SA="${SCHEDULER_SA:-calendarsync-scheduler@${PROJECT_ID}.iam.gserviceaccount.com}"
+KMS_CRYPTO_KEY="${KMS_CRYPTO_KEY:-}"
 
 usage() {
   cat <<'EOF'
 Usage: deploy/deploy.sh [api] [web] [worker]
 
-Deploy one or more CalendarSync components by building a new image in Cloud Build
-and updating the existing Cloud Run service/job to that image.
+Deploy one or more CalendarSync components by building a new image and updating
+the existing Cloud Run service/job to that image.
 
 Optional environment variables:
   PROJECT_ID   GCP project id (default: open-calendar-sync)
   REGION       Artifact Registry / Cloud Run region (default: europe-west1)
   REPO         Artifact Registry repository name (default: calendarsync)
+  BUILD_BACKEND
+               Build backend to use: cloudbuild or docker (default: cloudbuild)
   TAG          Image tag override (default: current git sha, or timestamp for dirty trees)
 
 Examples:
@@ -66,12 +70,49 @@ require_existing_service() {
 }
 
 build_image() {
-  local config="$1"
+  local component="$1"
   local image="$2"
+  local cloudbuild_config=""
+  local dockerfile=""
+  local context=""
 
-  gcloud --project "${PROJECT_ID}" builds submit \
-    --config "${config}" \
-    --substitutions "_IMAGE=${image}" .
+  case "${component}" in
+    api)
+      cloudbuild_config="deploy/cloudbuild.api.yaml"
+      dockerfile="deploy/Dockerfile.api"
+      context="."
+      ;;
+    web)
+      cloudbuild_config="deploy/cloudbuild.web.yaml"
+      dockerfile="web/Dockerfile"
+      context="web"
+      ;;
+    worker)
+      cloudbuild_config="deploy/cloudbuild.worker.yaml"
+      dockerfile="deploy/Dockerfile.worker"
+      context="."
+      ;;
+    *)
+      echo "Unknown component for build: ${component}" >&2
+      exit 1
+      ;;
+  esac
+
+  case "${BUILD_BACKEND}" in
+    cloudbuild)
+      gcloud --project "${PROJECT_ID}" builds submit \
+        --config "${cloudbuild_config}" \
+        --substitutions "_IMAGE=${image}" .
+      ;;
+    docker)
+      docker build -f "${dockerfile}" -t "${image}" "${context}"
+      docker push "${image}"
+      ;;
+    *)
+      echo "Unknown BUILD_BACKEND: ${BUILD_BACKEND}" >&2
+      exit 1
+      ;;
+  esac
 }
 
 deploy_service() {
@@ -99,6 +140,9 @@ deploy_job() {
 }
 
 require_cmd gcloud
+if [[ "${BUILD_BACKEND}" == "docker" ]]; then
+  require_cmd docker
+fi
 
 grant_run_invoker() {
   local service_name="$1"
@@ -124,6 +168,10 @@ gcloud --project "${PROJECT_ID}" artifacts repositories describe "${REPO}" \
     --location "${REGION}" \
     --description "CalendarSync images"
 
+if [[ "${BUILD_BACKEND}" == "docker" ]]; then
+  gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet >/dev/null
+fi
+
 TAG="${TAG:-}"
 if [[ -z "${TAG}" ]]; then
   TAG="$(git rev-parse --short HEAD 2>/dev/null || true)"
@@ -138,9 +186,13 @@ for component in "${COMPONENTS[@]}"; do
       require_existing_service service "${API_SERVICE}"
       IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${API_SERVICE}:${TAG}"
       echo "Building ${component} image: ${IMAGE}"
-      build_image "deploy/cloudbuild.api.yaml" "${IMAGE}"
+      build_image "api" "${IMAGE}"
       echo "Deploying service ${API_SERVICE}"
-      deploy_service "${API_SERVICE}" "${IMAGE}" --no-allow-unauthenticated --service-account "${API_SA}"
+      EXTRA_ARGS=(--no-allow-unauthenticated --service-account "${API_SA}")
+      if [[ -n "${KMS_CRYPTO_KEY}" ]]; then
+        EXTRA_ARGS+=(--update-env-vars "KMS_CRYPTO_KEY=${KMS_CRYPTO_KEY}")
+      fi
+      deploy_service "${API_SERVICE}" "${IMAGE}" "${EXTRA_ARGS[@]}"
       grant_run_invoker "${API_SERVICE}" "serviceAccount:${WEB_SA}"
       grant_run_invoker "${API_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
       remove_public_invoker "${API_SERVICE}"
@@ -149,7 +201,7 @@ for component in "${COMPONENTS[@]}"; do
       require_existing_service service "${WEB_SERVICE}"
       IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${WEB_SERVICE}:${TAG}"
       echo "Building ${component} image: ${IMAGE}"
-      build_image "deploy/cloudbuild.web.yaml" "${IMAGE}"
+      build_image "web" "${IMAGE}"
       echo "Deploying service ${WEB_SERVICE}"
       deploy_service "${WEB_SERVICE}" "${IMAGE}" --allow-unauthenticated --service-account "${WEB_SA}"
       ;;
@@ -157,9 +209,13 @@ for component in "${COMPONENTS[@]}"; do
       require_existing_service job "${WORKER_JOB}"
       IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${WORKER_JOB}:${TAG}"
       echo "Building ${component} image: ${IMAGE}"
-      build_image "deploy/cloudbuild.worker.yaml" "${IMAGE}"
+      build_image "worker" "${IMAGE}"
       echo "Deploying job ${WORKER_JOB}"
-      deploy_job "${WORKER_JOB}" "${IMAGE}" --service-account "${WORKER_SA}"
+      EXTRA_ARGS=(--service-account "${WORKER_SA}")
+      if [[ -n "${KMS_CRYPTO_KEY}" ]]; then
+        EXTRA_ARGS+=(--update-env-vars "KMS_CRYPTO_KEY=${KMS_CRYPTO_KEY}")
+      fi
+      deploy_job "${WORKER_JOB}" "${IMAGE}" "${EXTRA_ARGS[@]}"
       ;;
     *)
       echo "Unknown component: ${component}" >&2
