@@ -315,6 +315,65 @@ Important:
   as an authorized redirect URI and `https://<web-domain>` as an authorized JavaScript
   origin in the same Google OAuth client.
 
+## Continuous Deployment from GitHub
+
+This repository includes a GitHub Actions CD workflow at
+`.github/workflows/deploy.yaml`. It deploys `calendarsync-api`,
+`calendarsync-web`, and `calendarsync-worker` after the `Build` workflow
+completes successfully for commits on `main`. Authentication uses Google Cloud
+Workload Identity Federation, so no long-lived GCP key is stored in GitHub.
+
+### 1. Bootstrap Workload Identity in GCP
+
+Run:
+
+```bash
+chmod +x deploy/setup_github_wif.sh
+./deploy/setup_github_wif.sh
+```
+
+By default this configures access for:
+
+- project `open-calendar-sync`
+- repository `nilsreichardt/CalendarSync-Cloud`
+- branch `main`
+
+You can override these with environment variables such as `PROJECT_ID`,
+`GITHUB_OWNER`, `GITHUB_REPO`, or `BRANCH`.
+
+The script creates:
+
+- a Workload Identity pool `github-actions`
+- an OIDC provider `github`
+- a deployer service account `github-deployer@<project>.iam.gserviceaccount.com`
+- the IAM bindings required to run Cloud Build and deploy Cloud Run services/jobs
+
+### 2. Configure GitHub Actions variables
+
+Add these repository variables in GitHub (`Settings -> Secrets and variables ->
+Actions -> Variables`):
+
+- `GCP_PROJECT_ID`
+- `GCP_REGION`
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`
+- `GCP_SERVICE_ACCOUNT`
+
+The bootstrap script prints the exact values to use.
+
+### 3. Bootstrap the runtime once
+
+The CD workflow reuses `deploy/deploy.sh`, which expects the Cloud Run services
+and job to exist already. For the first environment bootstrap, run:
+
+```bash
+GOOGLE_OAUTH_CLIENT_ID="<google-oauth-client-id>" \
+GOOGLE_OAUTH_CLIENT_SECRET="<google-oauth-client-secret>" \
+./deploy/e2e_deploy.sh
+```
+
+After that, each successful commit to `main` will build and deploy fresh images
+tagged with the GitHub commit SHA.
+
 ## Notes
 
 - Sync execution reuses the existing Go sync controller and transformer/filter factory.
