@@ -48,5 +48,5 @@ jobs:
         env:
           GITHUB_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Deploy API, web, and worker
-        run: ./deploy/deploy.sh api web worker
+      - name: Deploy API and worker
+        run: ./deploy/deploy.sh api worker

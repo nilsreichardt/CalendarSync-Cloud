@@ -34,3 +34,5 @@ vendor/
 # Cloud
 web/.next/
 web/node_modules/
+.vercel
+.env*.local
