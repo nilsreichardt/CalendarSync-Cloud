@@ -5,3 +5,5 @@ For interaction with Google Cloud services, use `gcloud` commands (e.g. deploy C
 The environment is already set up, so no need to run `./deploy/e2e_deploy.sh` again.
 
 For interaction with Neon, the connection string is stored in the `.env` file as `NEON_DB`.
+
+For interaction with Vercel, use `vercel` commands (e.g. deploy the frontend, create a new project, etc.).
