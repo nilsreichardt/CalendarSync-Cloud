@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 
 const metadataIdentityURL =
   "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
+const frontendSecretHeader = "X-CalendarSync-Frontend-Secret";
 
 function apiBaseURL() {
   const url = process.env.CALENDARSYNC_API_URL;
@@ -16,7 +17,8 @@ function apiAudience() {
 }
 
 function requiresIdentityToken(url: URL) {
-  return url.hostname.endsWith(".run.app") || process.env.CALENDARSYNC_API_REQUIRE_ID_TOKEN === "true";
+  void url;
+  return process.env.CALENDARSYNC_API_REQUIRE_ID_TOKEN === "true";
 }
 
 async function identityToken() {
@@ -46,6 +48,9 @@ async function headers(url: URL) {
     "X-User-ID": session.user.id,
     "X-User-Email": session.user.email
   };
+  if (process.env.CALENDARSYNC_API_SHARED_SECRET) {
+    result[frontendSecretHeader] = process.env.CALENDARSYNC_API_SHARED_SECRET;
+  }
   if (requiresIdentityToken(url)) {
     result.Authorization = `Bearer ${await identityToken()}`;
   }

@@ -23,6 +23,7 @@ type Server struct {
 	oauthConfig     oauth2.Config
 	stateSecret     []byte
 	schedulerSecret string
+	frontendSecret  string
 }
 
 type Config struct {
@@ -32,6 +33,7 @@ type Config struct {
 	GoogleRedirectURL   string
 	OAuthStateSecretB64 string
 	SchedulerSecret     string
+	FrontendSecret      string
 }
 
 func NewServer(ctx context.Context, cfg Config, tokenCodec *store.TokenCodec) (*Server, error) {
@@ -61,6 +63,7 @@ func NewServer(ctx context.Context, cfg Config, tokenCodec *store.TokenCodec) (*
 		},
 		stateSecret:     stateSecret,
 		schedulerSecret: cfg.SchedulerSecret,
+		frontendSecret:  strings.TrimSpace(cfg.FrontendSecret),
 	}, nil
 }
 
@@ -97,6 +100,9 @@ func respondErr(w http.ResponseWriter, status int, message string) {
 }
 
 func (s *Server) requireUser(ctx context.Context, w http.ResponseWriter, r *http.Request) (*store.User, bool) {
+	if !s.authorizeFrontendRequest(w, r) {
+		return nil, false
+	}
 	externalID := strings.TrimSpace(r.Header.Get("X-User-ID"))
 	email := strings.TrimSpace(r.Header.Get("X-User-Email"))
 	if externalID == "" || email == "" {
@@ -109,6 +115,17 @@ func (s *Server) requireUser(ctx context.Context, w http.ResponseWriter, r *http
 		return nil, false
 	}
 	return user, true
+}
+
+func (s *Server) authorizeFrontendRequest(w http.ResponseWriter, r *http.Request) bool {
+	if s.frontendSecret == "" {
+		return true
+	}
+	if strings.TrimSpace(r.Header.Get("X-CalendarSync-Frontend-Secret")) != s.frontendSecret {
+		respondErr(w, http.StatusUnauthorized, "missing or invalid frontend secret")
+		return false
+	}
+	return true
 }
 
 func parseUUIDFromPath(path string) (uuid.UUID, error) {

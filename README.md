@@ -59,7 +59,7 @@ the hosted cloud product in this fork is Google-focused today.
 
 - Google OAuth tokens are stored encrypted in the database.
 - Application data is backed by Neon/Postgres.
-- The cloud deployment targets Google Cloud services.
+- The backend deployment targets Google Cloud services, while the frontend is intended for Vercel.
 
 This README intentionally keeps the claims narrow and factual. If you self-host,
 your security posture depends on your own Google Cloud, secret-management, and
@@ -79,28 +79,34 @@ For the cloud version you will need:
 - a Neon/Postgres database
 - the schema in `db/migrations/0001_web_platform.sql`
 - a Google OAuth client
+- a Vercel project for `web/`
 - Google Cloud resources for Cloud Run, Cloud Build, Secret Manager, and Cloud Scheduler
 
 Useful deployment entrypoints:
 
-- `deploy/e2e_deploy.sh` bootstraps a first deployment, creates secrets, and creates scheduler jobs
-- `deploy/deploy.sh` rebuilds and redeploys existing services/jobs
+- `deploy/e2e_deploy.sh` bootstraps the Google Cloud backend, creates secrets, and creates scheduler jobs
+- `deploy/deploy.sh` rebuilds and redeploys the API/worker
   - Set `BUILD_BACKEND=docker` to build locally and push to Artifact Registry instead of using Cloud Build. This avoids Cloud Build staging bucket permissions, which is useful for GitHub WIF deploys.
+- Deploy `web/` separately on Vercel with the root directory set to `web`
 
 The repository's `.env.example` currently includes:
 
 - `CS_GOOGLE_CLIENT_ID`
 - `CS_GOOGLE_CLIENT_SECRET`
 - `NEON_DB`
+- `FRONTEND_SHARED_SECRET`
 
 For the deployed cloud services, the scripts and binaries also use variables
 such as `DATABASE_URL`, `GOOGLE_OAUTH_CLIENT_ID`,
 `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URL`,
 `SCHEDULER_SHARED_SECRET`, `OAUTH_STATE_SECRET_B64`, and
-`CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64`.
+`CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64`. The Vercel frontend also needs
+`AUTH_SECRET`, `AUTH_TRUST_HOST`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`,
+`CALENDARSYNC_API_URL`, and `CALENDARSYNC_API_SHARED_SECRET`.
 
-The deployment scripts use `gcloud`, and the default hosting path in this fork
-is Google Cloud plus Neon.
+The deployment scripts use `gcloud` for the backend, and the default hosting
+path in this fork is Vercel for `web/` plus Google Cloud and Neon for the API,
+worker, and data plane.
 
 ## Original CLI project
 

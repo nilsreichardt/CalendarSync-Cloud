@@ -25,6 +25,7 @@ func main() {
 		GoogleRedirectURL:   mustEnv("GOOGLE_OAUTH_REDIRECT_URL"),
 		OAuthStateSecretB64: mustEnv("OAUTH_STATE_SECRET_B64"),
 		SchedulerSecret:     mustEnv("SCHEDULER_SHARED_SECRET"),
+		FrontendSecret:      os.Getenv("FRONTEND_SHARED_SECRET"),
 	}, tokenCodec)
 	if err != nil {
 		log.Fatal(err)

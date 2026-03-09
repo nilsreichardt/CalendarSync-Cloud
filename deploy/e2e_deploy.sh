@@ -5,15 +5,14 @@ PROJECT_ID="open-calendar-sync"
 REGION="${REGION:-europe-west1}"
 REPO="calendarsync"
 API_SERVICE="calendarsync-api"
-WEB_SERVICE="calendarsync-web"
 WORKER_JOB="calendarsync-worker"
 API_SA_ID="calendarsync-api"
-WEB_SA_ID="calendarsync-web"
 WORKER_SA_ID="calendarsync-worker"
 SCHEDULER_SA_ID="calendarsync-scheduler"
 KMS_KEY_RING="${KMS_KEY_RING:-calendarsync}"
 KMS_KEY_NAME="${KMS_KEY_NAME:-oauth-token-key}"
 WEB_DOMAIN="${WEB_DOMAIN:-}"
+FRONTEND_URL="${FRONTEND_URL:-}"
 
 if [[ -f .env && -z "${NEON_DB:-}" ]]; then
   NEON_DB="$(sed -n 's/^NEON_DB=//p' .env)"
@@ -80,21 +79,11 @@ grant_run_invoker() {
     --role "roles/run.invoker" >/dev/null
 }
 
-remove_public_invoker() {
-  local service_name="$1"
-  gcloud --project "${PROJECT_ID}" run services remove-iam-policy-binding "${service_name}" \
-    --region "${REGION}" \
-    --member "allUsers" \
-    --role "roles/run.invoker" >/dev/null 2>&1 || true
-}
-
 API_SA="$(service_account_email "${API_SA_ID}")"
-WEB_SA="$(service_account_email "${WEB_SA_ID}")"
 WORKER_SA="$(service_account_email "${WORKER_SA_ID}")"
 SCHEDULER_SA="$(service_account_email "${SCHEDULER_SA_ID}")"
 
 ensure_service_account "${API_SA_ID}" "CalendarSync API"
-ensure_service_account "${WEB_SA_ID}" "CalendarSync Web"
 ensure_service_account "${WORKER_SA_ID}" "CalendarSync Worker"
 ensure_service_account "${SCHEDULER_SA_ID}" "CalendarSync Scheduler"
 
@@ -122,7 +111,6 @@ gcloud --project "${PROJECT_ID}" artifacts repositories describe "${REPO}" --loc
   gcloud --project "${PROJECT_ID}" artifacts repositories create "${REPO}" --repository-format docker --location "${REGION}" --description "CalendarSync images"
 
 API_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${API_SERVICE}:latest"
-WEB_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${WEB_SERVICE}:latest"
 WORKER_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${WORKER_JOB}:latest"
 
 ensure_secret() {
@@ -136,6 +124,7 @@ ensure_secret() {
 SCHEDULER_SECRET="$(openssl rand -hex 24)"
 STATE_SECRET_B64="$(openssl rand -base64 32 | tr -d '\n')"
 STATIC_ENCRYPTION_KEY_B64="$(openssl rand -base64 32 | tr -d '\n')"
+FRONTEND_SHARED_SECRET="${FRONTEND_SHARED_SECRET:-$(openssl rand -hex 24)}"
 
 ensure_secret "calendarsync-neon-db" "${NEON_DB}"
 ensure_secret "calendarsync-google-client-id" "${GOOGLE_OAUTH_CLIENT_ID}"
@@ -143,6 +132,7 @@ ensure_secret "calendarsync-google-client-secret" "${GOOGLE_OAUTH_CLIENT_SECRET}
 ensure_secret "calendarsync-scheduler-secret" "${SCHEDULER_SECRET}"
 ensure_secret "calendarsync-oauth-state-secret-b64" "${STATE_SECRET_B64}"
 ensure_secret "calendarsync-static-encryption-key-b64" "${STATIC_ENCRYPTION_KEY_B64}"
+ensure_secret "calendarsync-frontend-shared-secret" "${FRONTEND_SHARED_SECRET}"
 
 grant_secret_accessor "calendarsync-neon-db" "serviceAccount:${API_SA}"
 grant_secret_accessor "calendarsync-google-client-id" "serviceAccount:${API_SA}"
@@ -150,10 +140,7 @@ grant_secret_accessor "calendarsync-google-client-secret" "serviceAccount:${API_
 grant_secret_accessor "calendarsync-scheduler-secret" "serviceAccount:${API_SA}"
 grant_secret_accessor "calendarsync-oauth-state-secret-b64" "serviceAccount:${API_SA}"
 grant_secret_accessor "calendarsync-static-encryption-key-b64" "serviceAccount:${API_SA}"
-
-grant_secret_accessor "calendarsync-oauth-state-secret-b64" "serviceAccount:${WEB_SA}"
-grant_secret_accessor "calendarsync-google-client-id" "serviceAccount:${WEB_SA}"
-grant_secret_accessor "calendarsync-google-client-secret" "serviceAccount:${WEB_SA}"
+grant_secret_accessor "calendarsync-frontend-shared-secret" "serviceAccount:${API_SA}"
 
 grant_secret_accessor "calendarsync-neon-db" "serviceAccount:${WORKER_SA}"
 grant_secret_accessor "calendarsync-google-client-id" "serviceAccount:${WORKER_SA}"
@@ -167,64 +154,28 @@ gcloud --project "${PROJECT_ID}" builds submit \
 gcloud --project "${PROJECT_ID}" builds submit \
   --config deploy/cloudbuild.worker.yaml \
   --substitutions "_IMAGE=${WORKER_IMAGE}" .
-
-gcloud --project "${PROJECT_ID}" builds submit \
-  --config deploy/cloudbuild.web.yaml \
-  --substitutions "_IMAGE=${WEB_IMAGE}" .
-
-# First deploy web so we can compute redirect URL.
-INITIAL_AUTH_URL="https://placeholder.invalid"
-if [[ -n "${WEB_DOMAIN}" ]]; then
-  INITIAL_AUTH_URL="https://${WEB_DOMAIN}"
+if [[ -z "${FRONTEND_URL}" && -n "${WEB_DOMAIN}" ]]; then
+  FRONTEND_URL="https://${WEB_DOMAIN}"
 fi
-gcloud --project "${PROJECT_ID}" run deploy "${WEB_SERVICE}" \
-  --region "${REGION}" \
-  --image "${WEB_IMAGE}" \
-  --allow-unauthenticated \
-  --service-account "${WEB_SA}" \
-  --set-env-vars "AUTH_TRUST_HOST=true,AUTH_URL=${INITIAL_AUTH_URL},CALENDARSYNC_API_URL=https://placeholder.invalid" \
-  --set-secrets "AUTH_SECRET=calendarsync-oauth-state-secret-b64:latest,AUTH_GOOGLE_ID=calendarsync-google-client-id:latest,AUTH_GOOGLE_SECRET=calendarsync-google-client-secret:latest"
-
-WEB_URL="$(gcloud --project "${PROJECT_ID}" run services describe "${WEB_SERVICE}" --region "${REGION}" --format='value(status.url)')"
-PUBLIC_WEB_URL="${WEB_URL}"
-if [[ -n "${WEB_DOMAIN}" ]]; then
-  PUBLIC_WEB_URL="https://${WEB_DOMAIN}"
+if [[ -n "${FRONTEND_URL}" ]]; then
+  FRONTEND_URL="${FRONTEND_URL%/}"
 fi
-API_REDIRECT_URL="${PUBLIC_WEB_URL}/oauth/google/callback"
+API_REDIRECT_URL="https://placeholder.invalid/oauth/google/callback"
+if [[ -n "${FRONTEND_URL}" ]]; then
+  API_REDIRECT_URL="${FRONTEND_URL}/oauth/google/callback"
+fi
 
 gcloud --project "${PROJECT_ID}" run deploy "${API_SERVICE}" \
   --region "${REGION}" \
   --image "${API_IMAGE}" \
-  --no-allow-unauthenticated \
+  --allow-unauthenticated \
   --service-account "${API_SA}" \
-  --set-secrets "DATABASE_URL=calendarsync-neon-db:latest,GOOGLE_OAUTH_CLIENT_ID=calendarsync-google-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=calendarsync-google-client-secret:latest,SCHEDULER_SHARED_SECRET=calendarsync-scheduler-secret:latest,OAUTH_STATE_SECRET_B64=calendarsync-oauth-state-secret-b64:latest,CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64=calendarsync-static-encryption-key-b64:latest" \
+  --set-secrets "DATABASE_URL=calendarsync-neon-db:latest,GOOGLE_OAUTH_CLIENT_ID=calendarsync-google-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=calendarsync-google-client-secret:latest,SCHEDULER_SHARED_SECRET=calendarsync-scheduler-secret:latest,OAUTH_STATE_SECRET_B64=calendarsync-oauth-state-secret-b64:latest,CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64=calendarsync-static-encryption-key-b64:latest,FRONTEND_SHARED_SECRET=calendarsync-frontend-shared-secret:latest" \
   --set-env-vars "GOOGLE_OAUTH_REDIRECT_URL=${API_REDIRECT_URL},DISPATCH_MIN_INTERVAL_SECONDS=30,KMS_CRYPTO_KEY=${KMS_CRYPTO_KEY}"
 
-grant_run_invoker "${API_SERVICE}" "serviceAccount:${WEB_SA}"
 grant_run_invoker "${API_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
-remove_public_invoker "${API_SERVICE}"
 
 API_URL="$(gcloud --project "${PROJECT_ID}" run services describe "${API_SERVICE}" --region "${REGION}" --format='value(status.url)')"
-
-gcloud --project "${PROJECT_ID}" run deploy "${WEB_SERVICE}" \
-  --region "${REGION}" \
-  --image "${WEB_IMAGE}" \
-  --allow-unauthenticated \
-  --service-account "${WEB_SA}" \
-  --set-env-vars "AUTH_TRUST_HOST=true,AUTH_URL=${PUBLIC_WEB_URL},CALENDARSYNC_API_URL=${API_URL}" \
-  --set-secrets "AUTH_SECRET=calendarsync-oauth-state-secret-b64:latest,AUTH_GOOGLE_ID=calendarsync-google-client-id:latest,AUTH_GOOGLE_SECRET=calendarsync-google-client-secret:latest"
-
-if [[ -n "${WEB_DOMAIN}" ]]; then
-  if gcloud --project "${PROJECT_ID}" beta run domain-mappings describe \
-    --domain "${WEB_DOMAIN}" --region "${REGION}" >/dev/null 2>&1; then
-    echo "Cloud Run domain mapping already exists for ${WEB_DOMAIN}"
-  else
-    gcloud --project "${PROJECT_ID}" beta run domain-mappings create \
-      --service "${WEB_SERVICE}" \
-      --domain "${WEB_DOMAIN}" \
-      --region "${REGION}"
-  fi
-fi
 
 gcloud --project "${PROJECT_ID}" run jobs deploy "${WORKER_JOB}" \
   --region "${REGION}" \
@@ -262,17 +213,26 @@ gcloud --project "${PROJECT_ID}" scheduler jobs create http calendarsync-run-wor
   --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform"
 
 echo "Deployment completed."
-echo "Web URL: ${WEB_URL}"
-if [[ -n "${WEB_DOMAIN}" ]]; then
-  echo "Custom web URL: https://${WEB_DOMAIN}"
-fi
 echo "API URL: ${API_URL}"
 echo "Google OAuth redirect URL configured in API: ${API_REDIRECT_URL}"
-echo "Remember to add this redirect URL to your Google OAuth client:"
-echo "  ${API_REDIRECT_URL}"
-if [[ -n "${WEB_DOMAIN}" ]]; then
-  echo "Also add this authorized redirect URI for NextAuth:"
-  echo "  https://${WEB_DOMAIN}/api/auth/callback/google"
-  echo "And this authorized JavaScript origin:"
-  echo "  https://${WEB_DOMAIN}"
+echo "Vercel frontend root directory: web"
+if [[ -n "${FRONTEND_URL}" ]]; then
+  echo "Frontend URL: ${FRONTEND_URL}"
+else
+  echo "Frontend URL not set. Redeploy the API with FRONTEND_URL once your Vercel URL or custom domain is known."
+fi
+echo "Configure these Vercel environment variables:"
+echo "  AUTH_SECRET=${STATE_SECRET_B64}"
+echo "  AUTH_TRUST_HOST=true"
+echo "  AUTH_GOOGLE_ID=${GOOGLE_OAUTH_CLIENT_ID}"
+echo "  AUTH_GOOGLE_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET}"
+echo "  CALENDARSYNC_API_URL=${API_URL}"
+echo "  CALENDARSYNC_API_SHARED_SECRET=${FRONTEND_SHARED_SECRET}"
+if [[ -n "${FRONTEND_URL}" ]]; then
+  echo "  AUTH_URL=${FRONTEND_URL}"
+  echo "Remember to add these redirect URLs to your Google OAuth client:"
+  echo "  ${API_REDIRECT_URL}"
+  echo "  ${FRONTEND_URL}/api/auth/callback/google"
+  echo "Authorized JavaScript origin:"
+  echo "  ${FRONTEND_URL}"
 fi

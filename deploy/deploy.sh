@@ -6,17 +6,16 @@ REGION="${REGION:-europe-west1}"
 REPO="${REPO:-calendarsync}"
 BUILD_BACKEND="${BUILD_BACKEND:-cloudbuild}"
 API_SERVICE="${API_SERVICE:-calendarsync-api}"
-WEB_SERVICE="${WEB_SERVICE:-calendarsync-web}"
 WORKER_JOB="${WORKER_JOB:-calendarsync-worker}"
 API_SA="${API_SA:-calendarsync-api@${PROJECT_ID}.iam.gserviceaccount.com}"
-WEB_SA="${WEB_SA:-calendarsync-web@${PROJECT_ID}.iam.gserviceaccount.com}"
 WORKER_SA="${WORKER_SA:-calendarsync-worker@${PROJECT_ID}.iam.gserviceaccount.com}"
 SCHEDULER_SA="${SCHEDULER_SA:-calendarsync-scheduler@${PROJECT_ID}.iam.gserviceaccount.com}"
 KMS_CRYPTO_KEY="${KMS_CRYPTO_KEY:-}"
+FRONTEND_URL="${FRONTEND_URL:-}"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/deploy.sh [api] [web] [worker]
+Usage: deploy/deploy.sh [api] [worker]
 
 Deploy one or more CalendarSync components by building a new image and updating
 the existing Cloud Run service/job to that image.
@@ -27,10 +26,11 @@ Optional environment variables:
   REPO         Artifact Registry repository name (default: calendarsync)
   BUILD_BACKEND
                Build backend to use: cloudbuild or docker (default: cloudbuild)
+  FRONTEND_URL Public frontend URL; if set, api deploy updates GOOGLE_OAUTH_REDIRECT_URL
   TAG          Image tag override (default: current git sha, or timestamp for dirty trees)
 
 Examples:
-  deploy/deploy.sh api web
+  deploy/deploy.sh api
   PROJECT_ID=open-calendar-sync REGION=europe-west1 deploy/deploy.sh worker
 
 For first-time/bootstrap deployment that also creates secrets and scheduler jobs,
@@ -44,7 +44,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 if [[ "$#" -eq 0 ]]; then
-  COMPONENTS=(api web)
+  COMPONENTS=(api)
 else
   COMPONENTS=("$@")
 fi
@@ -81,11 +81,6 @@ build_image() {
       cloudbuild_config="deploy/cloudbuild.api.yaml"
       dockerfile="deploy/Dockerfile.api"
       context="."
-      ;;
-    web)
-      cloudbuild_config="deploy/cloudbuild.web.yaml"
-      dockerfile="web/Dockerfile"
-      context="web"
       ;;
     worker)
       cloudbuild_config="deploy/cloudbuild.worker.yaml"
@@ -153,14 +148,6 @@ grant_run_invoker() {
     --role "roles/run.invoker" >/dev/null
 }
 
-remove_public_invoker() {
-  local service_name="$1"
-  gcloud --project "${PROJECT_ID}" run services remove-iam-policy-binding "${service_name}" \
-    --region "${REGION}" \
-    --member "allUsers" \
-    --role "roles/run.invoker" >/dev/null 2>&1 || true
-}
-
 gcloud --project "${PROJECT_ID}" artifacts repositories describe "${REPO}" \
   --location "${REGION}" >/dev/null 2>&1 || \
   gcloud --project "${PROJECT_ID}" artifacts repositories create "${REPO}" \
@@ -188,22 +175,15 @@ for component in "${COMPONENTS[@]}"; do
       echo "Building ${component} image: ${IMAGE}"
       build_image "api" "${IMAGE}"
       echo "Deploying service ${API_SERVICE}"
-      EXTRA_ARGS=(--no-allow-unauthenticated --service-account "${API_SA}")
+      EXTRA_ARGS=(--allow-unauthenticated --service-account "${API_SA}")
       if [[ -n "${KMS_CRYPTO_KEY}" ]]; then
         EXTRA_ARGS+=(--update-env-vars "KMS_CRYPTO_KEY=${KMS_CRYPTO_KEY}")
       fi
+      if [[ -n "${FRONTEND_URL}" ]]; then
+        EXTRA_ARGS+=(--update-env-vars "GOOGLE_OAUTH_REDIRECT_URL=${FRONTEND_URL%/}/oauth/google/callback")
+      fi
       deploy_service "${API_SERVICE}" "${IMAGE}" "${EXTRA_ARGS[@]}"
-      grant_run_invoker "${API_SERVICE}" "serviceAccount:${WEB_SA}"
       grant_run_invoker "${API_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
-      remove_public_invoker "${API_SERVICE}"
-      ;;
-    web)
-      require_existing_service service "${WEB_SERVICE}"
-      IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${WEB_SERVICE}:${TAG}"
-      echo "Building ${component} image: ${IMAGE}"
-      build_image "web" "${IMAGE}"
-      echo "Deploying service ${WEB_SERVICE}"
-      deploy_service "${WEB_SERVICE}" "${IMAGE}" --allow-unauthenticated --service-account "${WEB_SA}"
       ;;
     worker)
       require_existing_service job "${WORKER_JOB}"
@@ -218,6 +198,9 @@ for component in "${COMPONENTS[@]}"; do
       deploy_job "${WORKER_JOB}" "${IMAGE}" "${EXTRA_ARGS[@]}"
       ;;
     *)
+      if [[ "${component}" == "web" ]]; then
+        echo "Frontend deployments moved to Vercel. Deploy the Next.js app from ./web there." >&2
+      fi
       echo "Unknown component: ${component}" >&2
       usage >&2
       exit 1
