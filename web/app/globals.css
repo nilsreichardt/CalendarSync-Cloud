@@ -34,6 +34,10 @@ a {
   padding: 24px;
 }
 
+.shell > main {
+  min-height: calc(100vh - 210px);
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -78,6 +82,62 @@ a {
 
 .muted {
   color: var(--muted);
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 28px;
+  padding: 20px 4px 8px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.footer__links {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.footer__links a:hover {
+  color: var(--accent);
+}
+
+.legal-page {
+  max-width: 760px;
+}
+
+.legal-page h2 {
+  margin: 8px 0 6px;
+}
+
+.legal-page h3 {
+  margin: 20px 0 8px;
+}
+
+.legal-page p {
+  margin: 0;
+  line-height: 1.65;
+}
+
+.legal-page section + section {
+  margin-top: 4px;
+}
+
+.legal-page__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(12, 124, 89, 0.1);
 }
 
 .grid {
@@ -330,5 +390,10 @@ textarea {
   .grid,
   .choice-card__config--grid {
     grid-template-columns: 1fr;
+  }
+
+  .footer {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

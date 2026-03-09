@@ -49,7 +49,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               </Link>
             </div>
           )}
-          <div style={{ marginTop: 18 }}>{children}</div>
+          <main style={{ marginTop: 18 }}>{children}</main>
+          <footer className="footer">
+            <div className="footer__copy">CalendarSync Cloud</div>
+            <div className="footer__links">
+              <Link href="/privacy-policy">Privacy Policy</Link>
+              <Link href="/terms-of-service">Terms of Service</Link>
+            </div>
+          </footer>
         </div>
       </body>
     </html>
