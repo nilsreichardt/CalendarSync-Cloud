@@ -35,17 +35,208 @@ func (p *PostgresStore) Close() error {
 }
 
 func (p *PostgresStore) UpsertUser(ctx context.Context, externalID, email string) (*User, error) {
-	row := p.db.QueryRowContext(ctx, `
-		INSERT INTO users (external_id, email)
-		VALUES ($1, $2)
-		ON CONFLICT (external_id) DO UPDATE SET email = EXCLUDED.email, updated_at = NOW()
-		RETURNING id, external_id, email
-	`, externalID, email)
-	var user User
-	if err := row.Scan(&user.ID, &user.ExternalID, &user.Email); err != nil {
+	externalID = strings.TrimSpace(externalID)
+	email = normalizeEmail(email)
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	users, err := p.lockUsersForIdentity(ctx, tx, externalID, email)
+	if err != nil {
+		return nil, err
+	}
+
+	var user User
+	if len(users) == 0 {
+		row := tx.QueryRowContext(ctx, `
+			INSERT INTO users (external_id, email)
+			VALUES ($1, $2)
+			ON CONFLICT (external_id) DO UPDATE SET email = EXCLUDED.email, updated_at = NOW()
+			RETURNING id, external_id, email
+		`, externalID, email)
+		if err := row.Scan(&user.ID, &user.ExternalID, &user.Email); err != nil {
+			return nil, err
+		}
+	} else {
+		canonical := users[0]
+		duplicateIDs := make([]uuid.UUID, 0, len(users)-1)
+		for _, candidate := range users[1:] {
+			if candidate.ID != canonical.ID {
+				duplicateIDs = append(duplicateIDs, candidate.ID)
+			}
+		}
+		if len(duplicateIDs) > 0 {
+			if err := p.mergeUsers(ctx, tx, canonical.ID, duplicateIDs); err != nil {
+				return nil, err
+			}
+		}
+
+		row := tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET external_id = $2, email = $3, updated_at = NOW()
+			WHERE id = $1
+			RETURNING id, external_id, email
+		`, canonical.ID, externalID, email)
+		if err := row.Scan(&user.ID, &user.ExternalID, &user.Email); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
 	return &user, nil
+}
+
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func (p *PostgresStore) lockUsersForIdentity(ctx context.Context, tx *sql.Tx, externalID, email string) ([]User, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, external_id, email
+		FROM users
+		WHERE lower(btrim(email)) = $1 OR external_id = $2
+		ORDER BY CASE WHEN lower(btrim(email)) = $1 THEN 0 ELSE 1 END, created_at ASC, id ASC
+		FOR UPDATE
+	`, email, externalID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	users := []User{}
+	for rows.Next() {
+		var user User
+		if err := rows.Scan(&user.ID, &user.ExternalID, &user.Email); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+func (p *PostgresStore) mergeUsers(ctx context.Context, tx *sql.Tx, canonicalUserID uuid.UUID, duplicateUserIDs []uuid.UUID) error {
+	if len(duplicateUserIDs) == 0 {
+		return nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sync_rules
+		SET user_id = $1
+		WHERE user_id = ANY($2)
+	`, canonicalUserID, duplicateUserIDs); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO connection_calendars (connection_id, calendar_id, summary, is_primary, access_role, created_at)
+		SELECT existing.id, cc.calendar_id, cc.summary, cc.is_primary, cc.access_role, cc.created_at
+		FROM google_connections duplicate_gc
+		INNER JOIN google_connections existing
+		  ON existing.user_id = $1
+		 AND existing.google_sub = duplicate_gc.google_sub
+		INNER JOIN connection_calendars cc ON cc.connection_id = duplicate_gc.id
+		WHERE duplicate_gc.user_id = ANY($2)
+		ON CONFLICT (connection_id, calendar_id) DO UPDATE SET
+		  summary = EXCLUDED.summary,
+		  is_primary = connection_calendars.is_primary OR EXCLUDED.is_primary,
+		  access_role = CASE
+		    WHEN connection_calendars.access_role = '' THEN EXCLUDED.access_role
+		    ELSE connection_calendars.access_role
+		  END
+	`, canonicalUserID, duplicateUserIDs); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO encrypted_oauth_tokens (
+		  connection_id, provider, cipher_text, dek_cipher_text, nonce, key_version, created_at, updated_at
+		)
+		SELECT existing.id, token.provider, token.cipher_text, token.dek_cipher_text, token.nonce, token.key_version, NOW(), NOW()
+		FROM google_connections duplicate_gc
+		INNER JOIN google_connections existing
+		  ON existing.user_id = $1
+		 AND existing.google_sub = duplicate_gc.google_sub
+		INNER JOIN encrypted_oauth_tokens token ON token.connection_id = duplicate_gc.id
+		WHERE duplicate_gc.user_id = ANY($2)
+		ON CONFLICT (connection_id) DO UPDATE SET
+		  provider = EXCLUDED.provider,
+		  cipher_text = EXCLUDED.cipher_text,
+		  dek_cipher_text = EXCLUDED.dek_cipher_text,
+		  nonce = EXCLUDED.nonce,
+		  key_version = EXCLUDED.key_version,
+		  updated_at = NOW()
+	`, canonicalUserID, duplicateUserIDs); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sync_rules AS sr
+		SET source_connection_id = existing.id
+		FROM google_connections duplicate_gc
+		INNER JOIN google_connections existing
+		  ON existing.user_id = $1
+		 AND existing.google_sub = duplicate_gc.google_sub
+		WHERE duplicate_gc.user_id = ANY($2)
+		  AND sr.source_connection_id = duplicate_gc.id
+	`, canonicalUserID, duplicateUserIDs); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sync_rules AS sr
+		SET target_connection_id = existing.id
+		FROM google_connections duplicate_gc
+		INNER JOIN google_connections existing
+		  ON existing.user_id = $1
+		 AND existing.google_sub = duplicate_gc.google_sub
+		WHERE duplicate_gc.user_id = ANY($2)
+		  AND sr.target_connection_id = duplicate_gc.id
+	`, canonicalUserID, duplicateUserIDs); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE google_connections AS gc
+		SET user_id = $1, updated_at = NOW()
+		WHERE gc.user_id = ANY($2)
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM google_connections existing
+		    WHERE existing.user_id = $1
+		      AND existing.google_sub = gc.google_sub
+		  )
+	`, canonicalUserID, duplicateUserIDs); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM google_connections AS gc
+		WHERE gc.user_id = ANY($1)
+		  AND EXISTS (
+		    SELECT 1
+		    FROM google_connections existing
+		    WHERE existing.user_id = $2
+		      AND existing.google_sub = gc.google_sub
+		  )
+	`, duplicateUserIDs, canonicalUserID); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ANY($1)`, duplicateUserIDs); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (p *PostgresStore) CreateGoogleConnection(ctx context.Context, userID uuid.UUID, googleSub, email, displayName string, isPrimary bool) (*GoogleConnection, error) {
