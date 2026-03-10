@@ -1,6 +1,6 @@
 import { auth } from "@/auth";
 import { apiDelete, apiGet, apiPost } from "@/lib/api";
-import { createRuleAction } from "./actions";
+import { createRuleAction, updateRuleAction } from "./actions";
 import { CreateRuleForm } from "./create-rule-form";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
@@ -18,6 +18,7 @@ export default async function RulesPage({ searchParams }: RulesPageProps) {
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const confirmDeleteId =
     typeof resolvedSearchParams.confirmDelete === "string" ? resolvedSearchParams.confirmDelete : "";
+  const editRuleId = typeof resolvedSearchParams.edit === "string" ? resolvedSearchParams.edit : "";
 
   const [rulesData, connectionsData, calendarsData] = await Promise.all([
     apiGet("/api/rules"),
@@ -28,6 +29,7 @@ export default async function RulesPage({ searchParams }: RulesPageProps) {
   const connections = connectionsData.connections ?? [];
   const calendars = calendarsData.calendars ?? [];
   const ruleToConfirm = rules.find((rule: any) => rule.id === confirmDeleteId);
+  const ruleToEdit = rules.find((rule: any) => rule.id === editRuleId);
 
   return (
     <div>
@@ -74,7 +76,22 @@ export default async function RulesPage({ searchParams }: RulesPageProps) {
       )}
 
       <div className="card">
-        <CreateRuleForm action={createRuleAction} connections={connections} calendars={calendars} />
+        <CreateRuleForm
+          action={
+            ruleToEdit
+              ? async (formData) => {
+                  "use server";
+                  await updateRuleAction(ruleToEdit.id, formData);
+                }
+              : createRuleAction
+          }
+          connections={connections}
+          calendars={calendars}
+          initialRule={ruleToEdit}
+          title={ruleToEdit ? "Edit Rule" : "Create Rule"}
+          submitLabel={ruleToEdit ? "Save changes" : "Create rule"}
+          cancelHref={ruleToEdit ? "/rules" : undefined}
+        />
       </div>
 
       {rules.map((rule: any) => (
@@ -106,6 +123,9 @@ export default async function RulesPage({ searchParams }: RulesPageProps) {
               >
                 <button className="btn secondary">Cleanup</button>
               </form>
+              <Link className="btn secondary" href={`/rules?edit=${rule.id}`}>
+                Edit
+              </Link>
               <Link className="btn secondary" href={`/rules?confirmDelete=${rule.id}`}>
                 Delete
               </Link>

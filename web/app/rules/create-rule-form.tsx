@@ -19,6 +19,39 @@ type RuleFormProps = {
   connections: Connection[];
   calendars: Calendar[];
   action: (formData: FormData) => void | Promise<void>;
+  initialRule?: ExistingRule;
+  title?: string;
+  submitLabel?: string;
+  cancelHref?: string;
+};
+
+type ExistingRule = {
+  id: string;
+  name: string;
+  sourceConnectionId: string;
+  sourceCalendarId: string;
+  targetConnectionId: string;
+  targetCalendarId: string;
+  payloadMode: string;
+  schedule: string;
+  dryRun: boolean;
+  updateConcurrency: number;
+  start: {
+    identifier: string;
+    offset: number;
+  };
+  end: {
+    identifier: string;
+    offset: number;
+  };
+  filters?: Array<{
+    name: string;
+    config?: Record<string, unknown>;
+  }>;
+  transformations?: Array<{
+    name: string;
+    config?: Record<string, unknown>;
+  }>;
 };
 
 type PreviewEvent = {
@@ -142,6 +175,29 @@ const defaultPreviewEvent: PreviewEvent = {
   allDay: false
 };
 
+const defaultTransformationSelection: Record<string, boolean> = {
+  KeepTitle: true,
+  KeepDescription: true
+};
+
+const defaultFilterSelection: Record<string, boolean> = {
+  DeclinedEvents: true
+};
+
+const defaultTransformationConfig: Record<string, string | boolean> = {
+  "PrefixTitle.Prefix": "[Sync] ",
+  "ReplaceTitle.NewTitle": "CalendarSync Event",
+  "KeepAttendees.UseEmailAsDisplayName": false
+};
+
+const defaultFilterConfig: Record<string, string> = {
+  "TimeFrame.HourStart": "8",
+  "TimeFrame.HourEnd": "17",
+  "TimeFilter.HourStart": "12",
+  "TimeFilter.HourEnd": "13",
+  "RegexTitle.ExcludeRegexp": ".*test"
+};
+
 function InfoTip({ text }: { text: string }) {
   return (
     <details className="info-tip">
@@ -213,32 +269,64 @@ function calendarLabel(calendar: Calendar | undefined) {
   return calendar.summary || calendar.calendarId;
 }
 
-export function CreateRuleForm({ connections, calendars, action }: RuleFormProps) {
-  const [sourceConnectionId, setSourceConnectionId] = useState("");
-  const [targetConnectionId, setTargetConnectionId] = useState("");
-  const [sourceCalendarId, setSourceCalendarId] = useState("");
-  const [targetCalendarId, setTargetCalendarId] = useState("");
-  const [payloadMode, setPayloadMode] = useState("full");
+function buildSelectedNames(items: ExistingRule["filters"] | ExistingRule["transformations"], defaults: Record<string, boolean>) {
+  if (items == null) {
+    return { ...defaults };
+  }
+  if (items.length === 0) {
+    return {};
+  }
+
+  return items.reduce<Record<string, boolean>>((result, item) => {
+    result[item.name] = true;
+    return result;
+  }, {});
+}
+
+function buildConfigMap(
+  items: ExistingRule["filters"] | ExistingRule["transformations"],
+  defaults: Record<string, string | boolean>
+) {
+  if (!items?.length) {
+    return defaults;
+  }
+
+  const nextConfig = { ...defaults };
+  for (const item of items) {
+    for (const [key, value] of Object.entries(item.config ?? {})) {
+      nextConfig[`${item.name}.${key}`] = typeof value === "boolean" ? value : String(value);
+    }
+  }
+  return nextConfig;
+}
+
+export function CreateRuleForm({
+  connections,
+  calendars,
+  action,
+  initialRule,
+  title = "Create Rule",
+  submitLabel = "Create rule",
+  cancelHref
+}: RuleFormProps) {
+  const [sourceConnectionId, setSourceConnectionId] = useState(initialRule?.sourceConnectionId ?? "");
+  const [targetConnectionId, setTargetConnectionId] = useState(initialRule?.targetConnectionId ?? "");
+  const [sourceCalendarId, setSourceCalendarId] = useState(initialRule?.sourceCalendarId ?? "");
+  const [targetCalendarId, setTargetCalendarId] = useState(initialRule?.targetCalendarId ?? "");
+  const [payloadMode, setPayloadMode] = useState(initialRule?.payloadMode ?? "full");
   const [previewEvent, setPreviewEvent] = useState(defaultPreviewEvent);
-  const [selectedTransformations, setSelectedTransformations] = useState<Record<string, boolean>>({
-    KeepTitle: true,
-    KeepDescription: true
-  });
-  const [selectedFilters, setSelectedFilters] = useState<Record<string, boolean>>({
-    DeclinedEvents: true
-  });
-  const [transformationConfig, setTransformationConfig] = useState<Record<string, string | boolean>>({
-    "PrefixTitle.Prefix": "[Sync] ",
-    "ReplaceTitle.NewTitle": "CalendarSync Event",
-    "KeepAttendees.UseEmailAsDisplayName": false
-  });
-  const [filterConfig, setFilterConfig] = useState<Record<string, string>>({
-    "TimeFrame.HourStart": "8",
-    "TimeFrame.HourEnd": "17",
-    "TimeFilter.HourStart": "12",
-    "TimeFilter.HourEnd": "13",
-    "RegexTitle.ExcludeRegexp": ".*test"
-  });
+  const [selectedTransformations, setSelectedTransformations] = useState<Record<string, boolean>>(
+    buildSelectedNames(initialRule?.transformations, defaultTransformationSelection)
+  );
+  const [selectedFilters, setSelectedFilters] = useState<Record<string, boolean>>(
+    buildSelectedNames(initialRule?.filters, defaultFilterSelection)
+  );
+  const [transformationConfig, setTransformationConfig] = useState<Record<string, string | boolean>>(
+    buildConfigMap(initialRule?.transformations, defaultTransformationConfig)
+  );
+  const [filterConfig, setFilterConfig] = useState<Record<string, string>>(
+    buildConfigMap(initialRule?.filters, defaultFilterConfig) as Record<string, string>
+  );
 
   const sourceCalendars = useMemo(
     () => calendars.filter((calendar) => !sourceConnectionId || calendar.connectionId === sourceConnectionId),
@@ -339,7 +427,7 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
       <div className="rule-builder__form">
         <div className="rule-builder__intro">
           <div>
-            <h3 style={{ margin: 0 }}>Create Rule</h3>
+            <h3 style={{ margin: 0 }}>{title}</h3>
             <p className="muted" style={{ marginBottom: 0 }}>
               Build the sync on the left and test it against a sample source event on the right.
             </p>
@@ -356,7 +444,7 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
                 Rule name
                 <InfoTip text={baseFieldHelp.name} />
               </span>
-              <input name="name" placeholder="Personal -> Work busy sync" required />
+              <input name="name" placeholder="Personal -> Work busy sync" required defaultValue={initialRule?.name ?? ""} />
             </label>
 
             <label className="field">
@@ -364,7 +452,7 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
                 Schedule
                 <InfoTip text={baseFieldHelp.schedule} />
               </span>
-              <input name="schedule" defaultValue="FREQ=MINUTELY;INTERVAL=10" />
+              <input name="schedule" defaultValue={initialRule?.schedule ?? "FREQ=MINUTELY;INTERVAL=10"} />
             </label>
 
             <label className="field">
@@ -466,7 +554,7 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
                 Start anchor
                 <InfoTip text={baseFieldHelp.startIdentifier} />
               </span>
-              <select name="startIdentifier" defaultValue="TodayStart">
+              <select name="startIdentifier" defaultValue={initialRule?.start.identifier ?? "TodayStart"}>
                 {identifiers.map((identifier) => (
                   <option key={identifier} value={identifier}>
                     {identifier}
@@ -480,7 +568,7 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
                 Start offset
                 <InfoTip text={baseFieldHelp.startOffset} />
               </span>
-              <input name="startOffset" type="number" defaultValue={0} />
+              <input name="startOffset" type="number" defaultValue={initialRule?.start.offset ?? 0} />
             </label>
 
             <label className="field">
@@ -488,7 +576,7 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
                 End anchor
                 <InfoTip text={baseFieldHelp.endIdentifier} />
               </span>
-              <select name="endIdentifier" defaultValue="YearEnd">
+              <select name="endIdentifier" defaultValue={initialRule?.end.identifier ?? "YearEnd"}>
                 {identifiers.map((identifier) => (
                   <option key={identifier} value={identifier}>
                     {identifier}
@@ -502,7 +590,7 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
                 End offset
                 <InfoTip text={baseFieldHelp.endOffset} />
               </span>
-              <input name="endOffset" type="number" defaultValue={2} />
+              <input name="endOffset" type="number" defaultValue={initialRule?.end.offset ?? 2} />
             </label>
 
             <label className="field">
@@ -510,7 +598,7 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
                 Update concurrency
                 <InfoTip text={baseFieldHelp.updateConcurrency} />
               </span>
-              <input name="updateConcurrency" type="number" min={1} defaultValue={1} />
+              <input name="updateConcurrency" type="number" min={1} defaultValue={initialRule?.updateConcurrency ?? 1} />
             </label>
 
             <label className="field field--checkbox">
@@ -519,7 +607,7 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
                 <InfoTip text={baseFieldHelp.dryRun} />
               </span>
               <span className="checkbox-line">
-                <input type="checkbox" name="dryRun" />
+                <input type="checkbox" name="dryRun" defaultChecked={initialRule?.dryRun ?? false} />
                 Create no target events
               </span>
             </label>
@@ -630,7 +718,14 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
         </div>
 
         <div style={{ marginTop: 12 }}>
-          <button className="btn">Create rule</button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="btn">{submitLabel}</button>
+            {cancelHref ? (
+              <a className="btn secondary" href={cancelHref}>
+                Cancel
+              </a>
+            ) : null}
+          </div>
         </div>
       </div>
 

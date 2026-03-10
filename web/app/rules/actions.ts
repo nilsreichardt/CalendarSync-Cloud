@@ -1,6 +1,6 @@
 "use server";
 
-import { apiPost } from "@/lib/api";
+import { apiPatch, apiPost } from "@/lib/api";
 import { revalidatePath } from "next/cache";
 
 const transformerNames = new Set([
@@ -56,11 +56,11 @@ function readNumber(raw: FormDataEntryValue | null, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-export async function createRuleAction(formData: FormData) {
+function buildRulePayload(formData: FormData) {
   const transformations = parseNamedConfig(formData.get("transformationsJson"), transformerNames);
   const filters = parseNamedConfig(formData.get("filtersJson"), filterNames);
 
-  await apiPost("/api/rules", {
+  return {
     name: formData.get("name"),
     sourceConnectionId: formData.get("sourceConnectionId"),
     sourceCalendarId: formData.get("sourceCalendarId"),
@@ -82,7 +82,17 @@ export async function createRuleAction(formData: FormData) {
     },
     filters,
     transformations
-  });
+  };
+}
+
+export async function createRuleAction(formData: FormData) {
+  await apiPost("/api/rules", buildRulePayload(formData));
+
+  revalidatePath("/rules");
+}
+
+export async function updateRuleAction(ruleId: string, formData: FormData) {
+  await apiPatch(`/api/rules/${ruleId}`, buildRulePayload(formData));
 
   revalidatePath("/rules");
 }
