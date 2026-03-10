@@ -66,6 +66,9 @@ a {
 }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   border-radius: 12px;
   padding: 10px 14px;
@@ -73,11 +76,17 @@ a {
   background: var(--accent);
   color: var(--accent-ink);
   font-weight: 600;
+  text-decoration: none;
 }
 
 .btn.secondary {
   background: #eef2f7;
   color: #213547;
+}
+
+.btn.danger {
+  background: #c63d2f;
+  color: #fff7f5;
 }
 
 .muted {

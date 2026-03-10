@@ -126,7 +126,7 @@ export default async function RulesPage({ searchParams }: RulesPageProps) {
               <Link className="btn secondary" href={`/rules?edit=${rule.id}`}>
                 Edit
               </Link>
-              <Link className="btn secondary" href={`/rules?confirmDelete=${rule.id}`}>
+              <Link className="btn danger" href={`/rules?confirmDelete=${rule.id}`}>
                 Delete
               </Link>
             </div>
