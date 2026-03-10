@@ -7,6 +7,7 @@ import (
 
 	"github.com/inovex/CalendarSync/internal/config"
 	"github.com/inovex/CalendarSync/internal/models"
+	"github.com/inovex/CalendarSync/internal/transformation"
 
 	"github.com/charmbracelet/log"
 
@@ -185,6 +186,55 @@ func (suite *ControllerTestSuite) TestCleanUp() {
 	suite.sink.AssertNotCalled(suite.T(), "CreateEvent", ctx, mock.AnythingOfType("models.Event"))
 	suite.sink.AssertNotCalled(suite.T(), "UpdateEvent", ctx, mock.AnythingOfType("models.Event"))
 	suite.sink.AssertNumberOfCalls(suite.T(), "DeleteEvent", expectedDelete)
+}
+
+func (suite *ControllerTestSuite) TestCleanUpDeletesOrphanedPrefixedEvents() {
+	ctx := context.Background()
+	startTime := time.Now()
+	endTime := startTime.Add(2 * time.Hour)
+
+	sourceEvents := []models.Event{
+		{
+			ICalUID:     "source-event",
+			ID:          "source-id",
+			Title:       "aGYM Onboarding",
+			Description: "Description",
+			StartTime:   startTime,
+			EndTime:     endTime,
+			AllDay:      false,
+			Metadata:    models.NewEventMetadata("seed1", "uri", "sourceID"),
+		},
+	}
+
+	sinkEvents := []models.Event{
+		{
+			ICalUID:     "sink-orphan",
+			ID:          "sink-id",
+			Title:       "[a] aGYM Onboarding",
+			Description: "Description",
+			StartTime:   startTime,
+			EndTime:     endTime,
+			AllDay:      false,
+			// Metadata fell back to sink-derived values because the private
+			// CalendarSync properties are no longer present on the Google event.
+			Metadata: models.NewEventMetadata("sink-id", "uri", "sinkID"),
+		},
+	}
+
+	controller := NewController(log.Default(), suite.source, suite.sink, []Transformer{
+		&transformation.KeepDescription{},
+		&transformation.KeepTitle{},
+		&transformation.PrefixTitle{Prefix: "[a] "},
+	}, nil)
+
+	suite.source.On("EventsInTimeframe", ctx, startTime, endTime).Return(sourceEvents, nil)
+	suite.sink.On("EventsInTimeframe", ctx, startTime, endTime).Return(sinkEvents, nil)
+	suite.sink.On("DeleteEvent", ctx, mock.AnythingOfType("models.Event")).Return(nil)
+	suite.source.On("GetCalendarHash").Return("sourceID")
+
+	err := controller.CleanUp(ctx, startTime, endTime)
+	assert.NoError(suite.T(), err)
+	suite.sink.AssertNumberOfCalls(suite.T(), "DeleteEvent", 1)
 }
 
 // TestCreateEventsEmptySink asserts that, given that the sink does not contain any events,

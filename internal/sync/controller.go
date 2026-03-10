@@ -153,19 +153,19 @@ func (p Controller) SynchroniseTimeframe(ctx context.Context, start time.Time, e
 }
 
 func (p Controller) CleanUp(ctx context.Context, start time.Time, end time.Time) error {
-	_, eventsInSink, err := p.loadEvents(ctx, start, end)
+	eventsInSource, eventsInSink, err := p.loadEvents(ctx, start, end)
 	if err != nil {
 		return err
 	}
 
 	sink := maps(eventsInSink)
+	transformedSource := maps(p.cleanupCandidates(eventsInSource))
+	allowOrphanMatch := p.cleanupCanMatchOrphans()
 
 	var tasks []taskFunc
 
 	for _, event := range sink {
-		// Check if the sink event was synced by us, if there's no metadata the event may
-		// be there because we were invited or because it is not managed by us
-		if event.Metadata.SourceID == p.source.GetCalendarHash() {
+		if p.shouldDeleteDuringCleanup(event, transformedSource, allowOrphanMatch) {
 			// redefine to let the closure capture individual variables
 			event := event
 			tasks = append(tasks, func() error {
@@ -178,6 +178,59 @@ func (p Controller) CleanUp(ctx context.Context, start time.Time, end time.Time)
 	}
 
 	return parallel(ctx, p.concurrency, tasks)
+}
+
+func (p Controller) cleanupCandidates(sourceEvents []models.Event) []models.Event {
+	filteredEventsInSource := []models.Event{}
+	for _, event := range sourceEvents {
+		if event.Metadata != nil && event.Metadata.Managed {
+			continue
+		}
+		if FilterEvent(event, p.filters...) {
+			filteredEventsInSource = append(filteredEventsInSource, event)
+		}
+	}
+
+	transformedEvents := make([]models.Event, 0, len(filteredEventsInSource))
+	for _, event := range filteredEventsInSource {
+		transformedEvents = append(transformedEvents, TransformEvent(event, p.transformers...))
+	}
+	return transformedEvents
+}
+
+func (p Controller) shouldDeleteDuringCleanup(event models.Event, transformedSource map[string]models.Event, allowOrphanMatch bool) bool {
+	// Check if the sink event was synced by us, if there's no metadata the event may
+	// be there because we were invited or because it is not managed by us.
+	if event.Metadata != nil && event.Metadata.SourceID == p.source.GetCalendarHash() {
+		return true
+	}
+
+	if !allowOrphanMatch || event.Metadata == nil {
+		return false
+	}
+
+	sourceEvent, exists := transformedSource[event.Metadata.SyncID]
+	if exists && models.IsSameEvent(sourceEvent, event) {
+		return true
+	}
+
+	for _, candidate := range transformedSource {
+		if models.IsSameEvent(candidate, event) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (p Controller) cleanupCanMatchOrphans() bool {
+	for _, transformer := range p.transformers {
+		switch transformer.Name() {
+		case "PrefixTitle", "ReplaceTitle", "AddOriginalLink":
+			return true
+		}
+	}
+	return false
 }
 
 func (p Controller) diffEvents(sourceEvents []models.Event, sinkEvents []models.Event) ([]models.Event, []models.Event, []models.Event) {

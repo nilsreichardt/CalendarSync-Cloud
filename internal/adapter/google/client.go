@@ -138,7 +138,7 @@ func (g *GCalClient) CreateEvent(ctx context.Context, event models.Event) error 
 
 func isNotFound(err error) bool {
 	var gerr *googleapi.Error
-	return errors.As(err, &gerr) && gerr.Code == http.StatusNotFound
+	return errors.As(err, &gerr) && (gerr.Code == http.StatusNotFound || gerr.Code == http.StatusGone)
 }
 
 func (g *GCalClient) UpdateEvent(ctx context.Context, event models.Event) error {

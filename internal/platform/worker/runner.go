@@ -179,6 +179,7 @@ func (r *Runner) executeRun(ctx context.Context, run *store.SyncRun) error {
 	if err != nil {
 		return err
 	}
+	cleanupStart, cleanupEnd := cleanupWindow()
 
 	sourceAdapter, err := adapter.NewSourceAdapterFromConfig(ctx, 0, false, config.NewAdapterConfig(cfg.Source.Adapter), storage, log.Default())
 	if err != nil {
@@ -194,7 +195,9 @@ func (r *Runner) executeRun(ctx context.Context, run *store.SyncRun) error {
 	}
 
 	if run.TriggerType == "cleanup" {
-		if err := controller.CleanUp(ctx, start, end); err != nil {
+		// Hosted cleanup should remove all previously managed events for this rule,
+		// not only events inside the current sync window.
+		if err := controller.CleanUp(ctx, cleanupStart, cleanupEnd); err != nil {
 			return err
 		}
 	} else {
@@ -229,6 +232,10 @@ func timeFromConfig(st config.SyncTime) (time.Time, error) {
 	default:
 		return time.Time{}, fmt.Errorf("unsupported sync identifier: %s", st.Identifier)
 	}
+}
+
+func cleanupWindow() (time.Time, time.Time) {
+	return time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
 }
 
 func payloadTransformations(rule *store.SyncRule) []config.Transformer {
