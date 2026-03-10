@@ -24,7 +24,7 @@ func (t *KeepAttendees) Transform(source models.Event, sink models.Event) (model
 	var sinkAttendees models.Attendees
 	for _, sourceAttendee := range source.Attendees {
 		var displayName = sourceAttendee.DisplayName
-		if t.UseEmailAsDisplayName {
+		if t.UseEmailAsDisplayName || strings.TrimSpace(displayName) == "" {
 			displayName = sourceAttendee.Email
 		}
 
