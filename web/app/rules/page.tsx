@@ -77,6 +77,7 @@ export default async function RulesPage({ searchParams }: RulesPageProps) {
 
       <div className="card">
         <CreateRuleForm
+          key={ruleToEdit?.id ?? "new-rule"}
           action={
             ruleToEdit
               ? async (formData) => {
