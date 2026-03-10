@@ -3,8 +3,8 @@ package google
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/inovex/CalendarSync/internal/models"
+	"github.com/stretchr/testify/assert"
 	"google.golang.org/api/calendar/v3"
 )
 
@@ -36,6 +36,7 @@ func Test_ensureMetadata(t *testing.T) {
 				SyncID:           "test",
 				OriginalEventUri: "test",
 				SourceID:         "test",
+				Managed:          true,
 			},
 		},
 		{

@@ -153,6 +153,7 @@ func eventMetadataFromMap(md map[string]string, prefix string) *models.Metadata 
 		return nil
 	}
 	metadata.SourceID = strings.Trim(metadata.SourceID, "\"\\")
+	metadata.Managed = true
 
 	return &metadata
 }

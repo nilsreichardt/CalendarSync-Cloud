@@ -84,6 +84,11 @@ func (p Controller) SynchroniseTimeframe(ctx context.Context, start time.Time, e
 	}
 
 	for _, event := range eventsInSource {
+		if event.Metadata != nil && event.Metadata.Managed {
+			p.logger.Info("skipping CalendarSync-managed source event to prevent sync loops", logFields(event)...)
+			continue
+		}
+
 		if FilterEvent(event, p.filters...) {
 			filteredEventsInSource = append(filteredEventsInSource, event)
 		} else {

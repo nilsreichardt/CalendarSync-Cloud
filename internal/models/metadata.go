@@ -14,6 +14,8 @@ type Metadata struct {
 	OriginalEventUri string `json:"OriginalEventUri"`
 	// SourceID contains the unique hash of the source which this event was imported from
 	SourceID string `json:"SourceID"`
+	// Managed indicates that this event already contains CalendarSync-written metadata from a prior sync run.
+	Managed bool `json:"Managed,omitempty"`
 }
 
 func Hash(s string) uint64 {

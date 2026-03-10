@@ -322,6 +322,7 @@ func ensureMetadata(event Event, adapterSourceID string) *models.Metadata {
 				SyncID:           extension.SyncID,
 				OriginalEventUri: extension.OriginalEventUri,
 				SourceID:         extension.SourceID,
+				Managed:          true,
 			}
 		}
 	}
