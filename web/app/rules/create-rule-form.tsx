@@ -224,7 +224,9 @@ export function CreateRuleForm({ connections, calendars, action }: RuleFormProps
     KeepTitle: true,
     KeepDescription: true
   });
-  const [selectedFilters, setSelectedFilters] = useState<Record<string, boolean>>({});
+  const [selectedFilters, setSelectedFilters] = useState<Record<string, boolean>>({
+    DeclinedEvents: true
+  });
   const [transformationConfig, setTransformationConfig] = useState<Record<string, string | boolean>>({
     "PrefixTitle.Prefix": "[Sync] ",
     "ReplaceTitle.NewTitle": "CalendarSync Event",
