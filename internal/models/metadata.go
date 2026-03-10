@@ -3,6 +3,7 @@ package models
 import (
 	"fmt"
 	"hash/fnv"
+	"strings"
 )
 
 // Metadata describes the metadata which is added to events read from the source.
@@ -37,4 +38,19 @@ func NewEventMetadata(syncId, originalEventUri, sourceID string) *Metadata {
 		OriginalEventUri: originalEventUri,
 		SourceID:         sourceID,
 	}
+}
+
+// ManagedEventIDPrefix returns a deterministic, rule-specific prefix for
+// managed sink events. It is based on the source calendar hash and used as
+// a durable fallback when extended properties are missing.
+func ManagedEventIDPrefix(sourceID string) string {
+	return fmt.Sprintf("cs%d-", Hash(sourceID))
+}
+
+func ManagedEventID(sourceID, syncID string) string {
+	return ManagedEventIDPrefix(sourceID) + syncID
+}
+
+func IsManagedEventIDForSource(eventID, sourceID string) bool {
+	return strings.HasPrefix(eventID, ManagedEventIDPrefix(sourceID))
 }

@@ -153,6 +153,13 @@ const filters: FilterOption[] = [
     defaults: ["12", "13"]
   },
   {
+    name: "Days",
+    help: "Skips events on selected weekdays.",
+    configNames: ["ExcludeDays"],
+    configLabels: ["Days to skip (comma-separated)"],
+    defaults: ["Saturday,Sunday"]
+  },
+  {
     name: "RegexTitle",
     help: "Skips events whose title matches a regular expression.",
     configNames: ["ExcludeRegexp"],
@@ -195,6 +202,7 @@ const defaultFilterConfig: Record<string, string> = {
   "TimeFrame.HourEnd": "17",
   "TimeFilter.HourStart": "12",
   "TimeFilter.HourEnd": "13",
+  "Days.ExcludeDays": "Saturday,Sunday",
   "RegexTitle.ExcludeRegexp": ".*test"
 };
 
@@ -219,6 +227,18 @@ function matchesRegex(pattern: string, value: string) {
   } catch {
     return false;
   }
+}
+
+function weekdayFromDate(value: string) {
+  const [yearRaw, monthRaw, dayRaw] = value.split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return "";
+  }
+
+  return new Date(year, month - 1, day).toLocaleDateString("en-US", { weekday: "long" });
 }
 
 function buildTransformationsJson(selected: Record<string, boolean>, config: Record<string, string | boolean>) {
@@ -373,6 +393,17 @@ export function CreateRuleForm({
       const end = Number(filterConfig["TimeFilter.HourEnd"] || "24");
       if (eventHour >= start && eventHour < end) {
         reasons.push(`Filtered out because ${previewEvent.start} falls inside the blocked range ${start}:00-${end}:00.`);
+      }
+    }
+    if (selectedFilters.Days) {
+      const excludedDaysRaw = filterConfig["Days.ExcludeDays"] || "";
+      const excludedDays = excludedDaysRaw
+        .split(",")
+        .map((day) => day.trim().toLowerCase())
+        .filter(Boolean);
+      const eventDay = weekdayFromDate(previewEvent.day).toLowerCase();
+      if (eventDay && excludedDays.includes(eventDay)) {
+        reasons.push(`Filtered out because this event is on ${weekdayFromDate(previewEvent.day)}.`);
       }
     }
     if (selectedFilters.RegexTitle) {

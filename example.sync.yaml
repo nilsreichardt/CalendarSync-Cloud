@@ -74,6 +74,10 @@ filters:
     config:
       HourStart: 12
       HourEnd: 13
+  # Events on selected weekdays will be excluded
+  - name: Days
+    config:
+      ExcludeDays: "Saturday,Sunday"
   # Events where the title matches the ExcludeRegexp (RE2 Regex) aren't synced
   - name: RegexTitle
     config:

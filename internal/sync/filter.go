@@ -34,6 +34,7 @@ var (
 		"TimeFilter":     &filter.TimeFilterEvents{},
 		"DeclinedEvents": &filter.DeclinedEvents{},
 		"AllDayEvents":   &filter.AllDayEvents{},
+		"Days":           &filter.Days{},
 		"RegexTitle":     &filter.RegexTitle{},
 	}
 
@@ -42,6 +43,7 @@ var (
 		"TimeFilter",
 		"DeclinedEvents",
 		"AllDayEvents",
+		"Days",
 		"RegexTitle",
 	}
 )

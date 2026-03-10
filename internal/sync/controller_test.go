@@ -237,6 +237,68 @@ func (suite *ControllerTestSuite) TestCleanUpDeletesOrphanedPrefixedEvents() {
 	suite.sink.AssertNumberOfCalls(suite.T(), "DeleteEvent", 1)
 }
 
+func (suite *ControllerTestSuite) TestCleanUpDeletesManagedIDWithoutMetadata() {
+	ctx := context.Background()
+	startTime := time.Now()
+	endTime := startTime.Add(30 * time.Minute)
+
+	sourceEvents := []models.Event{}
+
+	sinkEvents := []models.Event{
+		{
+			ID:          models.ManagedEventID("sourceID", "12345"),
+			Title:       "CalendarSync Event",
+			Description: "",
+			StartTime:   startTime,
+			EndTime:     endTime,
+			AllDay:      false,
+			Metadata:    nil,
+		},
+	}
+
+	controller := NewController(log.Default(), suite.source, suite.sink, nil, nil)
+
+	suite.source.On("EventsInTimeframe", ctx, startTime, endTime).Return(sourceEvents, nil)
+	suite.sink.On("EventsInTimeframe", ctx, startTime, endTime).Return(sinkEvents, nil)
+	suite.sink.On("DeleteEvent", ctx, mock.AnythingOfType("models.Event")).Return(nil)
+	suite.source.On("GetCalendarHash").Return("sourceID")
+
+	err := controller.CleanUp(ctx, startTime, endTime)
+	assert.NoError(suite.T(), err)
+	suite.sink.AssertNumberOfCalls(suite.T(), "DeleteEvent", 1)
+}
+
+func (suite *ControllerTestSuite) TestCleanUpDoesNotDeleteUnmanagedIDWithoutMetadata() {
+	ctx := context.Background()
+	startTime := time.Now()
+	endTime := startTime.Add(30 * time.Minute)
+
+	sourceEvents := []models.Event{}
+
+	sinkEvents := []models.Event{
+		{
+			ID:          "non-managed-id",
+			Title:       "CalendarSync Event",
+			Description: "",
+			StartTime:   startTime,
+			EndTime:     endTime,
+			AllDay:      false,
+			Metadata:    nil,
+		},
+	}
+
+	controller := NewController(log.Default(), suite.source, suite.sink, nil, nil)
+
+	suite.source.On("EventsInTimeframe", ctx, startTime, endTime).Return(sourceEvents, nil)
+	suite.sink.On("EventsInTimeframe", ctx, startTime, endTime).Return(sinkEvents, nil)
+	suite.sink.On("DeleteEvent", ctx, mock.AnythingOfType("models.Event")).Return(nil)
+	suite.source.On("GetCalendarHash").Return("sourceID")
+
+	err := controller.CleanUp(ctx, startTime, endTime)
+	assert.NoError(suite.T(), err)
+	suite.sink.AssertNotCalled(suite.T(), "DeleteEvent", ctx, mock.AnythingOfType("models.Event"))
+}
+
 // TestCreateEventsEmptySink asserts that, given that the sink does not contain any events,
 // the controller properly creates the events in the sink.
 func (suite *ControllerTestSuite) TestCreateEventsEmptySink() {

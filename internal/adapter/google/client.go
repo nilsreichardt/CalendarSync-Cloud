@@ -114,7 +114,12 @@ func (g *GCalClient) CreateEvent(ctx context.Context, event models.Event) error 
 
 	call, err := retry(ctx, func() (*calendar.Event, error) {
 		g.RateLimiter.Take()
+		id := ""
+		if event.Metadata != nil {
+			id = models.ManagedEventID(event.Metadata.SourceID, event.Metadata.SyncID)
+		}
 		return g.Client.Events.Insert(g.CalendarId, &calendar.Event{
+			Id:                 id,
 			Summary:            event.Title,
 			Description:        event.Description,
 			Location:           event.Location,
