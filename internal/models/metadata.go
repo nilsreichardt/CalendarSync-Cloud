@@ -44,7 +44,9 @@ func NewEventMetadata(syncId, originalEventUri, sourceID string) *Metadata {
 // managed sink events. It is based on the source calendar hash and used as
 // a durable fallback when extended properties are missing.
 func ManagedEventIDPrefix(sourceID string) string {
-	return fmt.Sprintf("cs%d-", Hash(sourceID))
+	// Google event IDs only allow the base32hex charset (a-v, 0-9).
+	// Use a valid separator ('a') instead of '-'.
+	return fmt.Sprintf("cs%da", Hash(sourceID))
 }
 
 func ManagedEventID(sourceID, syncID string) string {
