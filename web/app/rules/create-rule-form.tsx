@@ -66,6 +66,7 @@ type PreviewEvent = {
   reminders: string;
   status: "confirmed" | "declined";
   allDay: boolean;
+  busyStatus: "busy" | "free";
 };
 
 type TransformationOption = {
@@ -137,7 +138,9 @@ const transformations: TransformationOption[] = [
 
 const filters: FilterOption[] = [
   { name: "DeclinedEvents", help: "Skips events you declined." },
-  { name: "AllDayEvents", help: "Skips all-day events." },
+  { name: "FreeEvents", help: "Skips all events marked as free (all-day and timed)." },
+  { name: "BusyAllDayEvents", help: "Skips all-day events that are marked as busy." },
+  { name: "FreeAllDayEvents", help: "Skips all-day events that are marked as free." },
   {
     name: "TimeFrame",
     help: "Keeps only events inside a daily hour range.",
@@ -179,7 +182,8 @@ const defaultPreviewEvent: PreviewEvent = {
   attendees: "alex@example.com, pat@example.com",
   reminders: "10 minutes before",
   status: "confirmed",
-  allDay: false
+  allDay: false,
+  busyStatus: "busy"
 };
 
 const defaultTransformationSelection: Record<string, boolean> = {
@@ -188,7 +192,8 @@ const defaultTransformationSelection: Record<string, boolean> = {
 };
 
 const defaultFilterSelection: Record<string, boolean> = {
-  DeclinedEvents: true
+  DeclinedEvents: true,
+  BusyAllDayEvents: true
 };
 
 const defaultTransformationConfig: Record<string, string | boolean> = {
@@ -310,6 +315,16 @@ function buildSelectedNames(
   }, {});
 }
 
+function buildSelectedFilterNames(items: ExistingRule["filters"], applyDefaults: boolean) {
+  const selected = buildSelectedNames(items, defaultFilterSelection, applyDefaults);
+  if (selected.AllDayEvents) {
+    selected.BusyAllDayEvents = true;
+    selected.FreeAllDayEvents = true;
+    delete selected.AllDayEvents;
+  }
+  return selected;
+}
+
 function buildConfigMap(
   items: ExistingRule["filters"] | ExistingRule["transformations"],
   defaults: Record<string, string | boolean>
@@ -347,7 +362,7 @@ export function CreateRuleForm({
     buildSelectedNames(initialRule?.transformations, defaultTransformationSelection, !isEditing)
   );
   const [selectedFilters, setSelectedFilters] = useState<Record<string, boolean>>(
-    buildSelectedNames(initialRule?.filters, defaultFilterSelection, !isEditing)
+    buildSelectedFilterNames(initialRule?.filters, !isEditing)
   );
   const [transformationConfig, setTransformationConfig] = useState<Record<string, string | boolean>>(
     buildConfigMap(initialRule?.transformations, defaultTransformationConfig)
@@ -386,8 +401,14 @@ export function CreateRuleForm({
     if (selectedFilters.DeclinedEvents && previewEvent.status === "declined") {
       reasons.push("Filtered out because the sample event is declined.");
     }
-    if (selectedFilters.AllDayEvents && previewEvent.allDay) {
-      reasons.push("Filtered out because the sample event is all-day.");
+    if (selectedFilters.FreeEvents && previewEvent.busyStatus === "free") {
+      reasons.push("Filtered out because the sample event is marked as free.");
+    }
+    if (previewEvent.allDay && selectedFilters.BusyAllDayEvents && previewEvent.busyStatus === "busy") {
+      reasons.push("Filtered out because the sample all-day event is marked as busy.");
+    }
+    if (previewEvent.allDay && selectedFilters.FreeAllDayEvents && previewEvent.busyStatus === "free") {
+      reasons.push("Filtered out because the sample all-day event is marked as free.");
     }
     if (selectedFilters.TimeFrame) {
       const start = Number(filterConfig["TimeFrame.HourStart"] || "0");
@@ -871,6 +892,18 @@ export function CreateRuleForm({
                   >
                     <option value="confirmed">Confirmed</option>
                     <option value="declined">Declined</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span className="field__label">Busy level</span>
+                  <select
+                    value={previewEvent.busyStatus}
+                    onChange={(event) =>
+                      setPreviewEvent((current) => ({ ...current, busyStatus: event.target.value as PreviewEvent["busyStatus"] }))
+                    }
+                  >
+                    <option value="busy">Busy</option>
+                    <option value="free">Free</option>
                   </select>
                 </label>
               </div>

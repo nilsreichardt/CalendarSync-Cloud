@@ -23,11 +23,26 @@ type Event struct {
 	StartTime   time.Time
 	EndTime     time.Time
 	AllDay      bool
+	BusyStatus  BusyStatus
 	Metadata    *Metadata
 	Attendees   Attendees
 	Reminders   Reminders
 	MeetingLink string
 	Accepted    bool
+}
+
+type BusyStatus string
+
+const (
+	BusyStatusBusy BusyStatus = "busy"
+	BusyStatusFree BusyStatus = "free"
+)
+
+func NormalizeBusyStatus(value BusyStatus) BusyStatus {
+	if value == BusyStatusFree {
+		return BusyStatusFree
+	}
+	return BusyStatusBusy
 }
 
 type Reminders []Reminder
@@ -73,13 +88,14 @@ type ReminderTrigger struct {
 // It can be aggregated by Transformers with additional data if desired.
 func NewSyncEvent(origin Event) Event {
 	return Event{
-		ICalUID:   origin.ICalUID,
-		ID:        origin.ID,
-		StartTime: origin.StartTime,
-		EndTime:   origin.EndTime,
-		AllDay:    origin.AllDay,
-		Title:     "CalendarSync Event",
-		Metadata:  origin.Metadata,
+		ICalUID:    origin.ICalUID,
+		ID:         origin.ID,
+		StartTime:  origin.StartTime,
+		EndTime:    origin.EndTime,
+		AllDay:     origin.AllDay,
+		BusyStatus: origin.BusyStatus,
+		Title:      "CalendarSync Event",
+		Metadata:   origin.Metadata,
 	}
 }
 
@@ -108,6 +124,7 @@ func (e *Event) Overwrite(source Event) Event {
 	e.StartTime = source.StartTime
 	e.EndTime = source.EndTime
 	e.AllDay = source.AllDay
+	e.BusyStatus = source.BusyStatus
 	e.Metadata = source.Metadata
 	e.Attendees = source.Attendees
 	e.Location = source.Location
@@ -135,6 +152,10 @@ func IsSameEvent(a, b Event) bool {
 
 	if a.AllDay != b.AllDay {
 		log.Debugf("AllDay of Source Event %s at %s changed", a.Title, a.StartTime)
+		return false
+	}
+	if NormalizeBusyStatus(a.BusyStatus) != NormalizeBusyStatus(b.BusyStatus) {
+		log.Debugf("BusyStatus of Source Event %s at %s changed, sourceStatus: %s, sinkStatus: %s", a.Title, a.StartTime, NormalizeBusyStatus(a.BusyStatus), NormalizeBusyStatus(b.BusyStatus))
 		return false
 	}
 

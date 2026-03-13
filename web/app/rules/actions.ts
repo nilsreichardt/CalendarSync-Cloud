@@ -15,7 +15,17 @@ const transformerNames = new Set([
   "ReplaceTitle"
 ]);
 
-const filterNames = new Set(["DeclinedEvents", "AllDayEvents", "TimeFrame", "TimeFilter", "Days", "RegexTitle"]);
+const filterNames = new Set([
+  "DeclinedEvents",
+  "FreeEvents",
+  "AllDayEvents",
+  "BusyAllDayEvents",
+  "FreeAllDayEvents",
+  "TimeFrame",
+  "TimeFilter",
+  "Days",
+  "RegexTitle"
+]);
 
 type NamedConfig = {
   name: string;

@@ -27,14 +27,16 @@ func calendarEventToEvent(e *calendar.Event, adapterSourceID string) models.Even
 	}
 
 	var reminders []models.Reminder
-	for _, reminder := range e.Reminders.Overrides {
-		if reminder.Method == "popup" {
-			reminders = append(reminders, models.Reminder{
-				Actions: models.ReminderActionDisplay,
-				Trigger: models.ReminderTrigger{
-					PointInTime: eventDateTimeToTime(e.Start).Add(-(time.Minute * time.Duration(reminder.Minutes))),
-				},
-			})
+	if e.Reminders != nil {
+		for _, reminder := range e.Reminders.Overrides {
+			if reminder.Method == "popup" {
+				reminders = append(reminders, models.Reminder{
+					Actions: models.ReminderActionDisplay,
+					Trigger: models.ReminderTrigger{
+						PointInTime: eventDateTimeToTime(e.Start).Add(-(time.Minute * time.Duration(reminder.Minutes))),
+					},
+				})
+			}
 		}
 	}
 
@@ -45,6 +47,7 @@ func calendarEventToEvent(e *calendar.Event, adapterSourceID string) models.Even
 		Description: e.Description,
 		Location:    e.Location,
 		AllDay:      isAllDayEvent(*e),
+		BusyStatus:  transparencyToBusyStatus(e.Transparency),
 		StartTime:   eventDateTimeToTime(e.Start),
 		EndTime:     eventDateTimeToTime(e.End),
 		Metadata:    metadata,
@@ -53,6 +56,20 @@ func calendarEventToEvent(e *calendar.Event, adapterSourceID string) models.Even
 		MeetingLink: e.HangoutLink,
 		Accepted:    hasEventAccepted,
 	}
+}
+
+func transparencyToBusyStatus(transparency string) models.BusyStatus {
+	if transparency == "transparent" {
+		return models.BusyStatusFree
+	}
+	return models.BusyStatusBusy
+}
+
+func busyStatusToTransparency(status models.BusyStatus) string {
+	if models.NormalizeBusyStatus(status) == models.BusyStatusFree {
+		return "transparent"
+	}
+	return "opaque"
 }
 
 // ensureMetadata will return the metadata for a given event.

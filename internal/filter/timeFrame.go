@@ -15,7 +15,7 @@ func (a TimeFrameEvents) Name() string {
 
 func (a TimeFrameEvents) Filter(event models.Event) bool {
 	// if it is an all-day event, it should not be filtered here,
-	// the AllDayEvents filter should be used instead
+	// the BusyAllDayEvents/FreeAllDayEvents filters should be used instead
 	if event.AllDay {
 		return true
 	}

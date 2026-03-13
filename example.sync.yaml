@@ -61,8 +61,12 @@ transformations:
 filters:
   # Events where you declined the invitation aren't synced
   - name: DeclinedEvents
-  # Events which cover the full day aren't synced
-  - name: AllDayEvents
+  # Optional: skip all events marked as "Free" (timed and all-day)
+  # - name: FreeEvents
+  # Busy all-day events are skipped by default
+  - name: BusyAllDayEvents
+  # Free all-day events are synced by default; enable this filter to skip them too
+  # - name: FreeAllDayEvents
   # Events within the specified timeframe will be retained, while all others will be filtered out.
   # hours are represented in the 24h time format (time is always UTC)
   - name: TimeFrame

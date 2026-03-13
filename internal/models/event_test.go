@@ -40,6 +40,7 @@ func TestEvent_Sync(t *testing.T) {
 				StartTime:   startTime,
 				EndTime:     endTime,
 				AllDay:      true,
+				BusyStatus:  BusyStatusBusy,
 				Metadata: &Metadata{
 					SyncID: "foo",
 				},
@@ -52,6 +53,7 @@ func TestEvent_Sync(t *testing.T) {
 				StartTime:   startTime,
 				EndTime:     endTime,
 				AllDay:      true,
+				BusyStatus:  BusyStatusBusy,
 				Metadata: &Metadata{
 					SyncID: "foo",
 				},

@@ -113,3 +113,24 @@ func Test_ensureMetadata(t *testing.T) {
 		})
 	}
 }
+
+func Test_transparencyMapping(t *testing.T) {
+	assert.Equal(t, models.BusyStatusBusy, transparencyToBusyStatus(""))
+	assert.Equal(t, models.BusyStatusBusy, transparencyToBusyStatus("opaque"))
+	assert.Equal(t, models.BusyStatusFree, transparencyToBusyStatus("transparent"))
+
+	assert.Equal(t, "opaque", busyStatusToTransparency(models.BusyStatusBusy))
+	assert.Equal(t, "transparent", busyStatusToTransparency(models.BusyStatusFree))
+	assert.Equal(t, "opaque", busyStatusToTransparency(""))
+}
+
+func Test_calendarEventToEventBusyStatus(t *testing.T) {
+	source := &calendar.Event{
+		Transparency: "transparent",
+		Start:        &calendar.EventDateTime{Date: "2026-03-13"},
+		End:          &calendar.EventDateTime{Date: "2026-03-14"},
+	}
+
+	mapped := calendarEventToEvent(source, "source")
+	assert.Equal(t, models.BusyStatusFree, mapped.BusyStatus)
+}
