@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -10,6 +12,19 @@ import (
 	"github.com/inovex/CalendarSync/internal/platform/store"
 	"github.com/inovex/CalendarSync/internal/platform/worker"
 )
+
+type runOnceRunner interface {
+	RunOnce(ctx context.Context) (bool, error)
+}
+
+type workerHTTPServer struct {
+	runner          runOnceRunner
+	schedulerSecret string
+}
+
+var runLoopSleep = func() {
+	time.Sleep(500 * time.Millisecond)
+}
 
 func main() {
 	ctx := context.Background()
@@ -29,16 +44,74 @@ func main() {
 	}
 
 	runner := worker.NewRunner(st, tokenCodec, mustEnv("GOOGLE_OAUTH_CLIENT_ID"), mustEnv("GOOGLE_OAUTH_CLIENT_SECRET"))
+	srv := &workerHTTPServer{
+		runner:          runner,
+		schedulerSecret: mustEnv("SCHEDULER_SHARED_SECRET"),
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/internal/worker/run", srv.handleRun)
+
+	addr := os.Getenv("PORT")
+	if addr == "" {
+		addr = "8080"
+	}
+	log.Printf("calendarsync-worker listening on :%s", addr)
+	log.Fatal(http.ListenAndServe(":"+addr, mux))
+}
+
+func (s *workerHTTPServer) handleRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
+			"error": "method not allowed",
+		})
+		return
+	}
+
+	incoming := r.Header.Get("X-Scheduler-Secret")
+	if incoming == "" || s.schedulerSecret == "" || incoming != s.schedulerSecret {
+		respondJSON(w, http.StatusUnauthorized, map[string]interface{}{
+			"error": "invalid scheduler secret",
+		})
+		return
+	}
+
+	processed, errors := drainRuns(r.Context(), s.runner)
+	status := "ok"
+	if errors > 0 {
+		status = "partial_error"
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"processed": processed,
+		"errors":    errors,
+		"status":    status,
+	})
+}
+
+func drainRuns(ctx context.Context, runner runOnceRunner) (int, int) {
+	processed := 0
+	errors := 0
 
 	for {
 		worked, err := runner.RunOnce(ctx)
 		if err != nil {
+			errors++
 			log.Printf("run error: %v", err)
 		}
 		if !worked {
-			return
+			return processed, errors
 		}
-		time.Sleep(500 * time.Millisecond)
+		processed++
+		runLoopSleep()
+	}
+}
+
+func respondJSON(w http.ResponseWriter, status int, payload map[string]interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("failed to encode response: %v", err)
 	}
 }
 

@@ -5,7 +5,7 @@ PROJECT_ID="open-calendar-sync"
 REGION="${REGION:-europe-west1}"
 REPO="calendarsync"
 API_SERVICE="calendarsync-api"
-WORKER_JOB="calendarsync-worker"
+WORKER_SERVICE="calendarsync-worker"
 API_SA_ID="calendarsync-api"
 WORKER_SA_ID="calendarsync-worker"
 SCHEDULER_SA_ID="calendarsync-scheduler"
@@ -62,14 +62,6 @@ grant_secret_accessor() {
     --role "roles/secretmanager.secretAccessor" >/dev/null
 }
 
-grant_service_account_user() {
-  local service_account_email="$1"
-  local member="$2"
-  gcloud --project "${PROJECT_ID}" iam service-accounts add-iam-policy-binding "${service_account_email}" \
-    --member "${member}" \
-    --role "roles/iam.serviceAccountUser" >/dev/null
-}
-
 grant_run_invoker() {
   local service_name="$1"
   local member="$2"
@@ -111,7 +103,7 @@ gcloud --project "${PROJECT_ID}" artifacts repositories describe "${REPO}" --loc
   gcloud --project "${PROJECT_ID}" artifacts repositories create "${REPO}" --repository-format docker --location "${REGION}" --description "CalendarSync images"
 
 API_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${API_SERVICE}:latest"
-WORKER_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${WORKER_JOB}:latest"
+WORKER_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${WORKER_SERVICE}:latest"
 
 ensure_secret() {
   local name="$1"
@@ -145,6 +137,7 @@ grant_secret_accessor "calendarsync-frontend-shared-secret" "serviceAccount:${AP
 grant_secret_accessor "calendarsync-neon-db" "serviceAccount:${WORKER_SA}"
 grant_secret_accessor "calendarsync-google-client-id" "serviceAccount:${WORKER_SA}"
 grant_secret_accessor "calendarsync-google-client-secret" "serviceAccount:${WORKER_SA}"
+grant_secret_accessor "calendarsync-scheduler-secret" "serviceAccount:${WORKER_SA}"
 grant_secret_accessor "calendarsync-static-encryption-key-b64" "serviceAccount:${WORKER_SA}"
 
 gcloud --project "${PROJECT_ID}" builds submit \
@@ -177,12 +170,21 @@ grant_run_invoker "${API_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
 
 API_URL="$(gcloud --project "${PROJECT_ID}" run services describe "${API_SERVICE}" --region "${REGION}" --format='value(status.url)')"
 
-gcloud --project "${PROJECT_ID}" run jobs deploy "${WORKER_JOB}" \
+gcloud --project "${PROJECT_ID}" run deploy "${WORKER_SERVICE}" \
   --region "${REGION}" \
   --image "${WORKER_IMAGE}" \
+  --execution-environment gen1 \
+  --cpu 0.25 \
+  --memory 256Mi \
+  --cpu-throttling \
+  --min-instances 0 \
+  --max-instances 1 \
+  --concurrency 1 \
+  --no-allow-unauthenticated \
   --service-account "${WORKER_SA}" \
-  --set-secrets "DATABASE_URL=calendarsync-neon-db:latest,GOOGLE_OAUTH_CLIENT_ID=calendarsync-google-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=calendarsync-google-client-secret:latest,CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64=calendarsync-static-encryption-key-b64:latest" \
+  --set-secrets "DATABASE_URL=calendarsync-neon-db:latest,GOOGLE_OAUTH_CLIENT_ID=calendarsync-google-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=calendarsync-google-client-secret:latest,SCHEDULER_SHARED_SECRET=calendarsync-scheduler-secret:latest,CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64=calendarsync-static-encryption-key-b64:latest" \
   --set-env-vars "KMS_CRYPTO_KEY=${KMS_CRYPTO_KEY}"
+grant_run_invoker "${WORKER_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
 
 # Scheduler -> dispatch endpoint
 gcloud --project "${PROJECT_ID}" scheduler jobs describe calendarsync-dispatch >/dev/null 2>&1 && \
@@ -196,21 +198,21 @@ gcloud --project "${PROJECT_ID}" scheduler jobs create http calendarsync-dispatc
   --oidc-token-audience "${API_URL}" \
   --headers "X-Scheduler-Secret=${SCHEDULER_SECRET}"
 
-# Scheduler -> run worker job
-RUN_URI="https://run.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/jobs/${WORKER_JOB}:run"
-gcloud --project "${PROJECT_ID}" projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member "serviceAccount:${SCHEDULER_SA}" \
-  --role "roles/run.developer" >/dev/null
-grant_service_account_user "${WORKER_SA}" "serviceAccount:${SCHEDULER_SA}"
+# Scheduler -> run worker service
+WORKER_URL="$(gcloud --project "${PROJECT_ID}" run services describe "${WORKER_SERVICE}" --region "${REGION}" --format='value(status.url)')"
 gcloud --project "${PROJECT_ID}" scheduler jobs describe calendarsync-run-worker >/dev/null 2>&1 && \
   gcloud --project "${PROJECT_ID}" scheduler jobs delete calendarsync-run-worker --quiet
 gcloud --project "${PROJECT_ID}" scheduler jobs create http calendarsync-run-worker \
   --location "${REGION}" \
   --schedule "*/10 * * * *" \
-  --uri "${RUN_URI}" \
+  --uri "${WORKER_URL}/internal/worker/run" \
   --http-method POST \
-  --oauth-service-account-email "${SCHEDULER_SA}" \
-  --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform"
+  --oidc-service-account-email "${SCHEDULER_SA}" \
+  --oidc-token-audience "${WORKER_URL}" \
+  --headers "X-Scheduler-Secret=${SCHEDULER_SECRET}"
+if gcloud --project "${PROJECT_ID}" run jobs describe "${WORKER_SERVICE}" --region "${REGION}" >/dev/null 2>&1; then
+  gcloud --project "${PROJECT_ID}" run jobs delete "${WORKER_SERVICE}" --region "${REGION}" --quiet
+fi
 
 echo "Deployment completed."
 echo "API URL: ${API_URL}"

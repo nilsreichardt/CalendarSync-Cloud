@@ -6,7 +6,7 @@ REGION="${REGION:-europe-west1}"
 REPO="${REPO:-calendarsync}"
 BUILD_BACKEND="${BUILD_BACKEND:-cloudbuild}"
 API_SERVICE="${API_SERVICE:-calendarsync-api}"
-WORKER_JOB="${WORKER_JOB:-calendarsync-worker}"
+WORKER_SERVICE="${WORKER_SERVICE:-calendarsync-worker}"
 API_SA="${API_SA:-calendarsync-api@${PROJECT_ID}.iam.gserviceaccount.com}"
 WORKER_SA="${WORKER_SA:-calendarsync-worker@${PROJECT_ID}.iam.gserviceaccount.com}"
 SCHEDULER_SA="${SCHEDULER_SA:-calendarsync-scheduler@${PROJECT_ID}.iam.gserviceaccount.com}"
@@ -18,7 +18,7 @@ usage() {
 Usage: deploy/deploy.sh [api] [worker]
 
 Deploy one or more CalendarSync components by building a new image and updating
-the existing Cloud Run service/job to that image.
+the existing Cloud Run service to that image.
 
 Optional environment variables:
   PROJECT_ID   GCP project id (default: open-calendar-sync)
@@ -122,21 +122,15 @@ deploy_service() {
     --quiet
 }
 
-deploy_job() {
-  local name="$1"
-  local image="$2"
-  shift 2
-
-  gcloud --project "${PROJECT_ID}" run jobs deploy "${name}" \
-    --region "${REGION}" \
-    --image "${image}" \
-    "$@" \
-    --quiet
-}
-
 require_cmd gcloud
 if [[ "${BUILD_BACKEND}" == "docker" ]]; then
   require_cmd docker
+fi
+
+if [[ -z "${KMS_CRYPTO_KEY}" ]]; then
+  KMS_CRYPTO_KEY="$(gcloud --project "${PROJECT_ID}" run services describe "${API_SERVICE}" \
+    --region "${REGION}" \
+    --format="value(spec.template.spec.containers[0].env[?name='KMS_CRYPTO_KEY'].value)" 2>/dev/null || true)"
 fi
 
 grant_run_invoker() {
@@ -186,16 +180,31 @@ for component in "${COMPONENTS[@]}"; do
       grant_run_invoker "${API_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
       ;;
     worker)
-      require_existing_service job "${WORKER_JOB}"
-      IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${WORKER_JOB}:${TAG}"
+      IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${WORKER_SERVICE}:${TAG}"
       echo "Building ${component} image: ${IMAGE}"
       build_image "worker" "${IMAGE}"
-      echo "Deploying job ${WORKER_JOB}"
-      EXTRA_ARGS=(--service-account "${WORKER_SA}")
+      echo "Deploying service ${WORKER_SERVICE}"
+      EXTRA_ARGS=(
+        --service-account "${WORKER_SA}"
+        --execution-environment gen1
+        --cpu 0.25
+        --memory 256Mi
+        --cpu-throttling
+        --min-instances 0
+        --max-instances 1
+        --concurrency 1
+        --no-allow-unauthenticated
+        --set-secrets "DATABASE_URL=calendarsync-neon-db:latest,GOOGLE_OAUTH_CLIENT_ID=calendarsync-google-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=calendarsync-google-client-secret:latest,SCHEDULER_SHARED_SECRET=calendarsync-scheduler-secret:latest,CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64=calendarsync-static-encryption-key-b64:latest"
+      )
       if [[ -n "${KMS_CRYPTO_KEY}" ]]; then
         EXTRA_ARGS+=(--update-env-vars "KMS_CRYPTO_KEY=${KMS_CRYPTO_KEY}")
       fi
-      deploy_job "${WORKER_JOB}" "${IMAGE}" "${EXTRA_ARGS[@]}"
+      deploy_service "${WORKER_SERVICE}" "${IMAGE}" "${EXTRA_ARGS[@]}"
+      grant_run_invoker "${WORKER_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
+      if gcloud --project "${PROJECT_ID}" run jobs describe "${WORKER_SERVICE}" --region "${REGION}" >/dev/null 2>&1; then
+        echo "Deleting legacy job ${WORKER_SERVICE}"
+        gcloud --project "${PROJECT_ID}" run jobs delete "${WORKER_SERVICE}" --region "${REGION}" --quiet
+      fi
       ;;
     *)
       if [[ "${component}" == "web" ]]; then
