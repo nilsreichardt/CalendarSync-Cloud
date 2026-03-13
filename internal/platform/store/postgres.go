@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/inovex/CalendarSync/internal/config"
@@ -816,6 +817,76 @@ func (p *PostgresStore) ClaimNextPendingRun(ctx context.Context) (*SyncRun, erro
 	return &run, nil
 }
 
+func (p *PostgresStore) FailStaleRuns(ctx context.Context, maxAge time.Duration) (int, error) {
+	leaseSeconds := int(maxAge / time.Second)
+	if leaseSeconds <= 0 {
+		leaseSeconds = 1
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	rows, err := tx.QueryContext(ctx, `
+		WITH stale_runs AS (
+		  SELECT sr.id
+		  FROM sync_runs sr
+		  LEFT JOIN rule_locks rl ON rl.rule_id = sr.rule_id AND rl.run_id = sr.id
+		  WHERE sr.status = 'running'
+		    AND sr.started_at IS NOT NULL
+		    AND sr.started_at < NOW() - make_interval(secs => $1)
+		    AND (
+		      rl.run_id IS NULL OR rl.locked_at < NOW() - make_interval(secs => $1)
+		    )
+		)
+		UPDATE sync_runs sr
+		SET status = 'failed',
+		    error = 'stale run recovered by worker lease watchdog',
+		    finished_at = NOW()
+		FROM stale_runs
+		WHERE sr.id = stale_runs.id
+		RETURNING sr.id
+	`, leaseSeconds)
+	if err != nil {
+		return 0, err
+	}
+	recovered := 0
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		recovered++
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
+	}
+	_ = rows.Close()
+
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM rule_locks rl
+		USING sync_runs sr
+		WHERE rl.run_id = sr.id
+		  AND (
+		    sr.status <> 'running'
+		    OR rl.locked_at < NOW() - make_interval(secs => $1)
+		  )
+	`, leaseSeconds); err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return recovered, nil
+}
+
 func (p *PostgresStore) MarkRunDone(ctx context.Context, runID uuid.UUID, summary map[string]int) error {
 	by, err := json.Marshal(summary)
 	if err != nil {
@@ -854,18 +925,48 @@ func (p *PostgresStore) GetRuleByID(ctx context.Context, ruleID uuid.UUID) (*Syn
 	return p.GetRule(ctx, userID, ruleID)
 }
 
-func (p *PostgresStore) AcquireRuleLock(ctx context.Context, ruleID, runID uuid.UUID) (bool, error) {
-	_, err := p.db.ExecContext(ctx, `INSERT INTO rule_locks (rule_id, run_id) VALUES ($1, $2)`, ruleID, runID)
-	if err == nil {
-		return true, nil
+func (p *PostgresStore) AcquireRuleLock(ctx context.Context, ruleID, runID uuid.UUID, lease time.Duration) (bool, error) {
+	leaseSeconds := int(lease / time.Second)
+	if leaseSeconds <= 0 {
+		leaseSeconds = 1
 	}
-	if strings.Contains(err.Error(), "duplicate key") {
-		return false, nil
+	row := p.db.QueryRowContext(ctx, `
+		INSERT INTO rule_locks (rule_id, run_id, locked_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (rule_id) DO UPDATE
+		SET run_id = EXCLUDED.run_id,
+		    locked_at = EXCLUDED.locked_at
+		WHERE rule_locks.run_id = EXCLUDED.run_id
+		   OR rule_locks.locked_at < NOW() - make_interval(secs => $3)
+		RETURNING run_id
+	`, ruleID, runID, leaseSeconds)
+	var claimedRunID uuid.UUID
+	if err := row.Scan(&claimedRunID); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
 	}
-	return false, err
+	return claimedRunID == runID, nil
 }
 
-func (p *PostgresStore) ReleaseRuleLock(ctx context.Context, ruleID uuid.UUID) error {
-	_, err := p.db.ExecContext(ctx, `DELETE FROM rule_locks WHERE rule_id = $1`, ruleID)
+func (p *PostgresStore) RenewRuleLock(ctx context.Context, ruleID, runID uuid.UUID) (bool, error) {
+	res, err := p.db.ExecContext(ctx, `
+		UPDATE rule_locks
+		SET locked_at = NOW()
+		WHERE rule_id = $1 AND run_id = $2
+	`, ruleID, runID)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+func (p *PostgresStore) ReleaseRuleLock(ctx context.Context, ruleID, runID uuid.UUID) error {
+	_, err := p.db.ExecContext(ctx, `DELETE FROM rule_locks WHERE rule_id = $1 AND run_id = $2`, ruleID, runID)
 	return err
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 type runOnceResult struct {
@@ -122,5 +123,35 @@ func TestHandleRunContinuesOnErrors(t *testing.T) {
 	}
 	if payload["processed"] != float64(2) || payload["errors"] != float64(1) || payload["status"] != "partial_error" {
 		t.Fatalf("unexpected response payload: %+v", payload)
+	}
+}
+
+func TestRunLockLeaseDefault(t *testing.T) {
+	t.Setenv("RUN_LOCK_LEASE_SECONDS", "")
+	if got := runLockLease(); got != 10*time.Minute {
+		t.Fatalf("expected default 10m lease, got %s", got)
+	}
+}
+
+func TestRunLockLeaseFromEnv(t *testing.T) {
+	t.Setenv("RUN_LOCK_LEASE_SECONDS", "120")
+	if got := runLockLease(); got != 120*time.Second {
+		t.Fatalf("expected 120s lease, got %s", got)
+	}
+}
+
+func TestRunLockLeaseInvalidValueFallsBackToDefault(t *testing.T) {
+	t.Setenv("RUN_LOCK_LEASE_SECONDS", "nope")
+	got := runLockLease()
+	if got != 10*time.Minute {
+		t.Fatalf("expected default 10m lease for invalid value, got %s", got)
+	}
+}
+
+func TestRunLockLeaseNonPositiveFallsBackToDefault(t *testing.T) {
+	t.Setenv("RUN_LOCK_LEASE_SECONDS", "0")
+	got := runLockLease()
+	if got != 10*time.Minute {
+		t.Fatalf("expected default 10m lease for non-positive value, got %s", got)
 	}
 }

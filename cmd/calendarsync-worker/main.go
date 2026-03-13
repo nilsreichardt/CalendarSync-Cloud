@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	platformcrypto "github.com/inovex/CalendarSync/internal/platform/crypto"
@@ -44,6 +46,7 @@ func main() {
 	}
 
 	runner := worker.NewRunner(st, tokenCodec, mustEnv("GOOGLE_OAUTH_CLIENT_ID"), mustEnv("GOOGLE_OAUTH_CLIENT_SECRET"))
+	runner.SetLockLease(runLockLease())
 	srv := &workerHTTPServer{
 		runner:          runner,
 		schedulerSecret: mustEnv("SCHEDULER_SHARED_SECRET"),
@@ -145,4 +148,17 @@ func mustEnv(key string) string {
 		log.Fatalf("missing required env var: %s", key)
 	}
 	return v
+}
+
+func runLockLease() time.Duration {
+	v := strings.TrimSpace(os.Getenv("RUN_LOCK_LEASE_SECONDS"))
+	if v == "" {
+		return 10 * time.Minute
+	}
+	seconds, err := strconv.Atoi(v)
+	if err != nil || seconds <= 0 {
+		log.Printf("invalid RUN_LOCK_LEASE_SECONDS=%q, using default 600", v)
+		return 10 * time.Minute
+	}
+	return time.Duration(seconds) * time.Second
 }

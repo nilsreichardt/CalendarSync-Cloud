@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -19,6 +20,7 @@ type Runner struct {
 	tokenCodec         *store.TokenCodec
 	googleClientID     string
 	googleClientSecret string
+	lockLease          time.Duration
 }
 
 func NewRunner(st *store.PostgresStore, tokenCodec *store.TokenCodec, googleClientID, googleClientSecret string) *Runner {
@@ -27,10 +29,19 @@ func NewRunner(st *store.PostgresStore, tokenCodec *store.TokenCodec, googleClie
 		tokenCodec:         tokenCodec,
 		googleClientID:     googleClientID,
 		googleClientSecret: googleClientSecret,
+		lockLease:          10 * time.Minute,
 	}
 }
 
 func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
+	recovered, err := r.store.FailStaleRuns(ctx, r.lockLease)
+	if err != nil {
+		return false, err
+	}
+	if recovered > 0 {
+		log.Warn("recovered stale runs", "count", recovered)
+	}
+
 	run, err := r.store.ClaimNextPendingRun(ctx)
 	if err != nil {
 		return false, err
@@ -52,48 +63,56 @@ func (r *Runner) executeRun(ctx context.Context, run *store.SyncRun) error {
 		return err
 	}
 
-	locked, err := r.store.AcquireRuleLock(ctx, rule.ID, run.ID)
+	locked, err := r.store.AcquireRuleLock(ctx, rule.ID, run.ID, r.lockLease)
 	if err != nil {
 		return err
 	}
 	if !locked {
 		return fmt.Errorf("rule is already running")
 	}
+
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	var lockLost atomic.Bool
+	stopHeartbeat := r.startLockHeartbeat(runCtx, rule.ID, run.ID, &lockLost, cancelRun)
+	defer stopHeartbeat()
+
 	defer func() {
-		if releaseErr := r.store.ReleaseRuleLock(ctx, rule.ID); releaseErr != nil {
+		if releaseErr := r.store.ReleaseRuleLock(context.Background(), rule.ID, run.ID); releaseErr != nil {
 			log.Error("failed to release rule lock", "rule_id", rule.ID, "err", releaseErr)
 		}
 	}()
 
-	sourceTokenRaw, err := r.store.GetEncryptedToken(ctx, rule.SourceConnectionID)
+	sourceTokenRaw, err := r.store.GetEncryptedToken(runCtx, rule.SourceConnectionID)
 	if err != nil {
 		return err
 	}
-	if rewritten, err := r.tokenCodec.ReencryptIfLegacy(ctx, sourceTokenRaw); err != nil {
+	if rewritten, err := r.tokenCodec.ReencryptIfLegacy(runCtx, sourceTokenRaw); err != nil {
 		return err
 	} else if rewritten != nil {
-		if err := r.store.StoreEncryptedToken(ctx, *rewritten); err != nil {
+		if err := r.store.StoreEncryptedToken(runCtx, *rewritten); err != nil {
 			return err
 		}
 		sourceTokenRaw = rewritten
 	}
-	targetTokenRaw, err := r.store.GetEncryptedToken(ctx, rule.TargetConnectionID)
+	targetTokenRaw, err := r.store.GetEncryptedToken(runCtx, rule.TargetConnectionID)
 	if err != nil {
 		return err
 	}
-	if rewritten, err := r.tokenCodec.ReencryptIfLegacy(ctx, targetTokenRaw); err != nil {
+	if rewritten, err := r.tokenCodec.ReencryptIfLegacy(runCtx, targetTokenRaw); err != nil {
 		return err
 	} else if rewritten != nil {
-		if err := r.store.StoreEncryptedToken(ctx, *rewritten); err != nil {
+		if err := r.store.StoreEncryptedToken(runCtx, *rewritten); err != nil {
 			return err
 		}
 		targetTokenRaw = rewritten
 	}
-	sourceToken, err := r.tokenCodec.DecryptToken(ctx, sourceTokenRaw)
+	sourceToken, err := r.tokenCodec.DecryptToken(runCtx, sourceTokenRaw)
 	if err != nil {
 		return err
 	}
-	targetToken, err := r.tokenCodec.DecryptToken(ctx, targetTokenRaw)
+	targetToken, err := r.tokenCodec.DecryptToken(runCtx, targetTokenRaw)
 	if err != nil {
 		return err
 	}
@@ -134,11 +153,11 @@ func (r *Runner) executeRun(ctx context.Context, run *store.SyncRun) error {
 		newToken.RefreshToken = token.RefreshToken
 		newToken.TokenType = token.TokenType
 		newToken.Expiry = expiry
-		encrypted, err := r.tokenCodec.EncryptToken(ctx, binding, "google", newToken)
+		encrypted, err := r.tokenCodec.EncryptToken(runCtx, binding, "google", newToken)
 		if err != nil {
 			return err
 		}
-		return r.store.StoreEncryptedToken(ctx, *encrypted)
+		return r.store.StoreEncryptedToken(runCtx, *encrypted)
 	}
 
 	cfg := config.File{
@@ -181,11 +200,11 @@ func (r *Runner) executeRun(ctx context.Context, run *store.SyncRun) error {
 	}
 	cleanupStart, cleanupEnd := cleanupWindow()
 
-	sourceAdapter, err := adapter.NewSourceAdapterFromConfig(ctx, 0, false, config.NewAdapterConfig(cfg.Source.Adapter), storage, log.Default())
+	sourceAdapter, err := adapter.NewSourceAdapterFromConfig(runCtx, 0, false, config.NewAdapterConfig(cfg.Source.Adapter), storage, log.Default())
 	if err != nil {
 		return err
 	}
-	sinkAdapter, err := adapter.NewSinkAdapterFromConfig(ctx, 0, false, config.NewAdapterConfig(cfg.Sink.Adapter), storage, log.Default())
+	sinkAdapter, err := adapter.NewSinkAdapterFromConfig(runCtx, 0, false, config.NewAdapterConfig(cfg.Sink.Adapter), storage, log.Default())
 	if err != nil {
 		return err
 	}
@@ -197,16 +216,70 @@ func (r *Runner) executeRun(ctx context.Context, run *store.SyncRun) error {
 	if run.TriggerType == "cleanup" {
 		// Hosted cleanup should remove all previously managed events for this rule,
 		// not only events inside the current sync window.
-		if err := controller.CleanUp(ctx, cleanupStart, cleanupEnd); err != nil {
+		if err := controller.CleanUp(runCtx, cleanupStart, cleanupEnd); err != nil {
 			return err
 		}
 	} else {
-		if err := controller.SynchroniseTimeframe(ctx, start, end, rule.DryRun); err != nil {
+		if err := controller.SynchroniseTimeframe(runCtx, start, end, rule.DryRun); err != nil {
 			return err
 		}
 	}
 
-	return r.store.MarkRunDone(ctx, run.ID, map[string]int{"ok": 1})
+	if lockLost.Load() {
+		return fmt.Errorf("run lock lease lost while executing rule")
+	}
+
+	return r.store.MarkRunDone(runCtx, run.ID, map[string]int{"ok": 1})
+}
+
+func (r *Runner) SetLockLease(lease time.Duration) {
+	if lease > 0 {
+		r.lockLease = lease
+	}
+}
+
+func (r *Runner) startLockHeartbeat(
+	ctx context.Context,
+	ruleID uuid.UUID,
+	runID uuid.UUID,
+	lockLost *atomic.Bool,
+	cancelRun context.CancelFunc,
+) func() {
+	interval := r.lockLease / 3
+	if interval < 5*time.Second {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				renewed, err := r.store.RenewRuleLock(ctx, ruleID, runID)
+				if err != nil {
+					log.Error("failed to renew rule lock", "rule_id", ruleID, "run_id", runID, "err", err)
+					lockLost.Store(true)
+					cancelRun()
+					return
+				}
+				if !renewed {
+					log.Error("rule lock no longer owned by current run", "rule_id", ruleID, "run_id", runID)
+					lockLost.Store(true)
+					cancelRun()
+					return
+				}
+			}
+		}
+	}()
+
+	return func() {
+		ticker.Stop()
+		<-done
+	}
 }
 
 func timeFromConfig(st config.SyncTime) (time.Time, error) {
