@@ -187,7 +187,7 @@ for component in "${COMPONENTS[@]}"; do
       EXTRA_ARGS=(
         --service-account "${WORKER_SA}"
         --execution-environment gen1
-        --cpu 0.25
+        --cpu 0.08
         --memory 256Mi
         --cpu-throttling
         --min-instances 0
