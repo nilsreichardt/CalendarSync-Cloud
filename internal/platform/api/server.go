@@ -15,6 +15,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/calendar/v3"
+	"google.golang.org/api/idtoken"
 )
 
 type Server struct {
@@ -24,6 +25,9 @@ type Server struct {
 	stateSecret     []byte
 	schedulerSecret string
 	frontendSecret  string
+	workerRunURL    string
+	workerHTTP      *http.Client
+	workerAuth      func(context.Context, string, ...idtoken.ClientOption) (*http.Client, error)
 }
 
 type Config struct {
@@ -34,6 +38,7 @@ type Config struct {
 	OAuthStateSecretB64 string
 	SchedulerSecret     string
 	FrontendSecret      string
+	WorkerRunURL        string
 }
 
 func NewServer(ctx context.Context, cfg Config, tokenCodec *store.TokenCodec) (*Server, error) {
@@ -64,6 +69,11 @@ func NewServer(ctx context.Context, cfg Config, tokenCodec *store.TokenCodec) (*
 		stateSecret:     stateSecret,
 		schedulerSecret: cfg.SchedulerSecret,
 		frontendSecret:  strings.TrimSpace(cfg.FrontendSecret),
+		workerRunURL:    strings.TrimSpace(cfg.WorkerRunURL),
+		workerHTTP: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+		workerAuth: idtoken.NewClient,
 	}, nil
 }
 

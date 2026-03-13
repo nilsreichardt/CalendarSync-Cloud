@@ -185,6 +185,7 @@ gcloud --project "${PROJECT_ID}" run deploy "${WORKER_SERVICE}" \
   --set-secrets "DATABASE_URL=calendarsync-neon-db:latest,GOOGLE_OAUTH_CLIENT_ID=calendarsync-google-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=calendarsync-google-client-secret:latest,SCHEDULER_SHARED_SECRET=calendarsync-scheduler-secret:latest,CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64=calendarsync-static-encryption-key-b64:latest" \
   --set-env-vars "KMS_CRYPTO_KEY=${KMS_CRYPTO_KEY}"
 grant_run_invoker "${WORKER_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
+grant_run_invoker "${WORKER_SERVICE}" "serviceAccount:${API_SA}"
 
 # Scheduler -> dispatch endpoint
 gcloud --project "${PROJECT_ID}" scheduler jobs describe calendarsync-dispatch >/dev/null 2>&1 && \
@@ -200,6 +201,9 @@ gcloud --project "${PROJECT_ID}" scheduler jobs create http calendarsync-dispatc
 
 # Scheduler -> run worker service
 WORKER_URL="$(gcloud --project "${PROJECT_ID}" run services describe "${WORKER_SERVICE}" --region "${REGION}" --format='value(status.url)')"
+gcloud --project "${PROJECT_ID}" run services update "${API_SERVICE}" \
+  --region "${REGION}" \
+  --update-env-vars "WORKER_RUN_URL=${WORKER_URL}/internal/worker/run"
 gcloud --project "${PROJECT_ID}" scheduler jobs describe calendarsync-run-worker >/dev/null 2>&1 && \
   gcloud --project "${PROJECT_ID}" scheduler jobs delete calendarsync-run-worker --quiet
 gcloud --project "${PROJECT_ID}" scheduler jobs create http calendarsync-run-worker \

@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -145,6 +146,9 @@ func (s *Server) handleRuleRun(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := s.triggerWorkerRun(r.Context()); err != nil {
+		log.Printf("manual run created but worker trigger failed: %v", err)
+	}
 	respondJSON(w, http.StatusAccepted, run)
 }
 
@@ -179,6 +183,9 @@ func (s *Server) handleRuleCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if err := s.triggerWorkerRun(r.Context()); err != nil {
+		log.Printf("cleanup run created but worker trigger failed: %v", err)
 	}
 	respondJSON(w, http.StatusAccepted, run)
 }

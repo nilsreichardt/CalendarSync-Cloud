@@ -170,14 +170,23 @@ for component in "${COMPONENTS[@]}"; do
       build_image "api" "${IMAGE}"
       echo "Deploying service ${API_SERVICE}"
       EXTRA_ARGS=(--allow-unauthenticated --service-account "${API_SA}")
+      WORKER_URL="$(gcloud --project "${PROJECT_ID}" run services describe "${WORKER_SERVICE}" \
+        --region "${REGION}" \
+        --format='value(status.url)' 2>/dev/null || true)"
       if [[ -n "${KMS_CRYPTO_KEY}" ]]; then
         EXTRA_ARGS+=(--update-env-vars "KMS_CRYPTO_KEY=${KMS_CRYPTO_KEY}")
       fi
       if [[ -n "${FRONTEND_URL}" ]]; then
         EXTRA_ARGS+=(--update-env-vars "GOOGLE_OAUTH_REDIRECT_URL=${FRONTEND_URL%/}/oauth/google/callback")
       fi
+      if [[ -n "${WORKER_URL}" ]]; then
+        EXTRA_ARGS+=(--update-env-vars "WORKER_RUN_URL=${WORKER_URL}/internal/worker/run")
+      fi
       deploy_service "${API_SERVICE}" "${IMAGE}" "${EXTRA_ARGS[@]}"
       grant_run_invoker "${API_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
+      if [[ -n "${WORKER_URL}" ]]; then
+        grant_run_invoker "${WORKER_SERVICE}" "serviceAccount:${API_SA}"
+      fi
       ;;
     worker)
       IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${WORKER_SERVICE}:${TAG}"
@@ -201,6 +210,7 @@ for component in "${COMPONENTS[@]}"; do
       fi
       deploy_service "${WORKER_SERVICE}" "${IMAGE}" "${EXTRA_ARGS[@]}"
       grant_run_invoker "${WORKER_SERVICE}" "serviceAccount:${SCHEDULER_SA}"
+      grant_run_invoker "${WORKER_SERVICE}" "serviceAccount:${API_SA}"
       if gcloud --project "${PROJECT_ID}" run jobs describe "${WORKER_SERVICE}" --region "${REGION}" >/dev/null 2>&1; then
         echo "Deleting legacy job ${WORKER_SERVICE}"
         gcloud --project "${PROJECT_ID}" run jobs delete "${WORKER_SERVICE}" --region "${REGION}" --quiet

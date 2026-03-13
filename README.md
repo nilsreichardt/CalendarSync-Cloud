@@ -100,7 +100,8 @@ For the deployed cloud services, the scripts and binaries also use variables
 such as `DATABASE_URL`, `GOOGLE_OAUTH_CLIENT_ID`,
 `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URL`,
 `SCHEDULER_SHARED_SECRET`, `OAUTH_STATE_SECRET_B64`, and
-`CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64`. The Vercel frontend also needs
+`CALENDARSYNC_STATIC_ENCRYPTION_KEY_B64`. For immediate worker wake-up on
+manual/cleanup runs, the API can also use `WORKER_RUN_URL`. The Vercel frontend also needs
 `AUTH_SECRET`, `AUTH_TRUST_HOST`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`,
 `CALENDARSYNC_API_URL`, and `CALENDARSYNC_API_SHARED_SECRET`.
 
