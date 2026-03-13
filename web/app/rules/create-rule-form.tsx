@@ -289,9 +289,16 @@ function calendarLabel(calendar: Calendar | undefined) {
   return calendar.summary || calendar.calendarId;
 }
 
-function buildSelectedNames(items: ExistingRule["filters"] | ExistingRule["transformations"], defaults: Record<string, boolean>) {
+function buildSelectedNames(
+  items: ExistingRule["filters"] | ExistingRule["transformations"],
+  defaults: Record<string, boolean>,
+  applyDefaults: boolean
+) {
   if (items == null) {
-    return { ...defaults };
+    if (applyDefaults) {
+      return { ...defaults };
+    }
+    return {};
   }
   if (items.length === 0) {
     return {};
@@ -329,6 +336,7 @@ export function CreateRuleForm({
   submitLabel = "Create rule",
   cancelHref
 }: RuleFormProps) {
+  const isEditing = Boolean(initialRule);
   const [sourceConnectionId, setSourceConnectionId] = useState(initialRule?.sourceConnectionId ?? "");
   const [targetConnectionId, setTargetConnectionId] = useState(initialRule?.targetConnectionId ?? "");
   const [sourceCalendarId, setSourceCalendarId] = useState(initialRule?.sourceCalendarId ?? "");
@@ -336,10 +344,10 @@ export function CreateRuleForm({
   const [payloadMode, setPayloadMode] = useState(initialRule?.payloadMode ?? "full");
   const [previewEvent, setPreviewEvent] = useState(defaultPreviewEvent);
   const [selectedTransformations, setSelectedTransformations] = useState<Record<string, boolean>>(
-    buildSelectedNames(initialRule?.transformations, defaultTransformationSelection)
+    buildSelectedNames(initialRule?.transformations, defaultTransformationSelection, !isEditing)
   );
   const [selectedFilters, setSelectedFilters] = useState<Record<string, boolean>>(
-    buildSelectedNames(initialRule?.filters, defaultFilterSelection)
+    buildSelectedNames(initialRule?.filters, defaultFilterSelection, !isEditing)
   );
   const [transformationConfig, setTransformationConfig] = useState<Record<string, string | boolean>>(
     buildConfigMap(initialRule?.transformations, defaultTransformationConfig)
