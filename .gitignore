@@ -4,6 +4,9 @@ local.sync.yaml
 
 example.yaml
 
+# Playwright
+.playwright-cli/
+
 # local auth credentials
 auth-storage.yaml
 .auth.yaml
